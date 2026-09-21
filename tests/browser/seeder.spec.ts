@@ -128,6 +128,29 @@ test("connection, every form preference, metadata keyboard controls, reload, and
     .getByRole("button", { name: "Seed customers", exact: true })
     .click();
   await expect(page.getByText("Your sandbox is ready")).toBeVisible();
+  const progress = page.getByRole("region", { name: "Batch progress" });
+  await expect(progress).toHaveCSS("position", "fixed");
+  await expect(
+    progress.getByRole("button", { name: "Expand batch details" }),
+  ).toHaveAttribute("aria-expanded", "false");
+  expect((await progress.boundingBox())!.height).toBeLessThan(70);
+  await expect(progress.getByRole("link", { name: "Customer ↗" })).toHaveCount(
+    0,
+  );
+  await progress.getByRole("button", { name: "Expand batch details" }).click();
+  await expect(progress.getByRole("link", { name: "Customer ↗" })).toHaveCount(
+    2,
+  );
+  await expect(
+    progress.getByRole("button", { name: "Collapse batch details" }),
+  ).toHaveAttribute("aria-expanded", "true");
+  await progress
+    .getByRole("button", { name: "Collapse batch details" })
+    .click();
+  await expect(progress.getByRole("link", { name: "Customer ↗" })).toHaveCount(
+    0,
+  );
+
   expect(payloads).toHaveLength(2);
   expect(payloads[0].config).toMatchObject({
     offline: true,
@@ -507,4 +530,78 @@ test("reset confirms, restores defaults, clears pending batches and optionally f
   ).not.toContain(saved.apiKey);
   await page.reload();
   await expect(page.getByLabel("Secret API key")).toHaveValue("");
+});
+
+test("fixed progress details scroll within the viewport on desktop and mobile", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    sessionStorage.setItem(
+      "stripe-seeder-pending-run",
+      JSON.stringify({
+        id: "50091123-d9dd-4d0c-a6c3-a713290af934",
+        total: 101,
+        completed: 100,
+        createdAt: Date.now(),
+        keyFingerprint: "fixture",
+        config: {
+          nameType: "company",
+          domain: "",
+          country: "GB",
+          addressOverrides: {},
+          priceId: "price_demo",
+          couponId: "",
+          customerMetadata: [],
+          subscriptionMetadata: [],
+          offline: false,
+        },
+        results: Array.from({ length: 100 }, (_, i) => ({
+          customerId: `cus_${i}`,
+          subscriptionId: `sub_${i}`,
+          name: `Company ${i}`,
+          email: `sample${i}@example.com`,
+          status: "active",
+        })),
+      }),
+    );
+  });
+  await page.goto("/");
+  const progress = page.getByRole("region", { name: "Batch progress" });
+  await expect(progress.getByText("100 / 101 created")).toBeVisible();
+  await progress.getByRole("button", { name: "Expand batch details" }).click();
+  await expect(progress.getByText("Company 0", { exact: true })).toBeVisible();
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 844 });
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+    const bounds = await progress.boundingBox();
+    expect(bounds!.y + bounds!.height).toBeCloseTo(844, 0);
+    expect(bounds!.height).toBeLessThan(500);
+    const scrollArea = page
+      .locator("#batch-progress-details")
+      .locator(".MuiCollapse-wrapperInner > div");
+    expect(
+      await scrollArea.evaluate((el) => el.scrollHeight > el.clientHeight),
+    ).toBe(true);
+    await scrollArea.evaluate((el) => {
+      el.scrollTop = el.scrollHeight;
+    });
+    await expect(
+      progress.getByText("Company 99", { exact: true }),
+    ).toBeInViewport();
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBe(true);
+    await page.screenshot({
+      path: `test-results/progress-${width}.png`,
+      animations: "disabled",
+    });
+  }
+  await progress
+    .getByRole("button", { name: "Collapse batch details" })
+    .click();
+  await expect(progress.getByText("Company 99", { exact: true })).toHaveCount(
+    0,
+  );
 });

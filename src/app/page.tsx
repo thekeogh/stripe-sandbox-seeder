@@ -33,10 +33,10 @@ import BusinessRounded from "@mui/icons-material/BusinessRounded";
 import PersonOutlineRounded from "@mui/icons-material/PersonOutlineRounded";
 import RefreshRounded from "@mui/icons-material/RefreshRounded";
 import ArrowForwardRounded from "@mui/icons-material/ArrowForwardRounded";
-import CheckCircleRounded from "@mui/icons-material/CheckCircleRounded";
 import DataObjectRounded from "@mui/icons-material/DataObjectRounded";
 import ReceiptLongRounded from "@mui/icons-material/ReceiptLongRounded";
 import ShieldOutlined from "@mui/icons-material/ShieldOutlined";
+import { BatchProgress, type SeedResult } from "@/components/batch-progress";
 import { MetadataEditor } from "@/components/metadata-editor";
 import {
   configSchema,
@@ -53,13 +53,7 @@ type Preview = {
   email: string;
   address: Address & { country: string };
 };
-type Result = {
-  customerId: string;
-  subscriptionId: string;
-  name: string;
-  email: string;
-  status: string;
-};
+type Result = SeedResult;
 type Run = {
   id: string;
   total: number;
@@ -603,10 +597,9 @@ export default function Home() {
         (!c.currency || c.currency === selectedPrice?.currency),
     ) || [];
   const address = { ...(preview?.address || emptyAddress), ...overrides };
-  const complete = !!run && run.completed === run.total;
 
   return (
-    <Box>
+    <Box sx={{ pb: run ? "calc(80px + env(safe-area-inset-bottom))" : 0 }}>
       <Box
         component="header"
         sx={{
@@ -1442,88 +1435,6 @@ export default function Home() {
           </Stack>
         </Box>
 
-        {run && (
-          <Paper variant="outlined" sx={{ p: 3, mt: 2 }}>
-            <Stack
-              direction="row"
-              sx={{
-                gap: 2,
-                alignItems: "center",
-                justifyContent: "space-between",
-                mb: 2,
-              }}
-            >
-              <Typography variant="h6">
-                {complete
-                  ? "Your sandbox is ready"
-                  : running
-                    ? "Creating your customers…"
-                    : "Batch paused"}
-              </Typography>
-              <Chip
-                size="small"
-                color={complete ? "success" : "default"}
-                label={`${run.completed} / ${run.total} created`}
-                icon={complete ? <CheckCircleRounded /> : undefined}
-              />
-            </Stack>
-            <LinearProgress
-              variant="determinate"
-              value={(run.completed / run.total) * 100}
-              sx={{ mb: 2, height: 6, borderRadius: 4 }}
-            />
-            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-              Every completed row has a customer and subscription.{" "}
-              {run.completed > 100 ? "Showing the most recent 100." : ""}
-            </Typography>
-            <Stack sx={{ gap: 1 }}>
-              {run.results.map((result) => (
-                <Box
-                  key={result.customerId}
-                  sx={{
-                    display: "flex",
-                    flexWrap: "wrap",
-                    justifyContent: "space-between",
-                    gap: 1,
-                    py: 1.5,
-                    borderTop: "1px solid",
-                    borderColor: "divider",
-                  }}
-                >
-                  <Box>
-                    <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                      {result.name}
-                    </Typography>
-                    <Typography variant="caption" color="text.secondary">
-                      {result.email}
-                    </Typography>
-                  </Box>
-                  <Stack direction="row" sx={{ gap: 2, alignItems: "center" }}>
-                    <Typography
-                      component="a"
-                      variant="caption"
-                      href={`https://dashboard.stripe.com/test/customers/${result.customerId}`}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      Customer ↗
-                    </Typography>
-                    <Typography
-                      component="a"
-                      variant="caption"
-                      href={`https://dashboard.stripe.com/test/subscriptions/${result.subscriptionId}`}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      Subscription ↗
-                    </Typography>
-                    <Chip size="small" label={result.status} />
-                  </Stack>
-                </Box>
-              ))}
-            </Stack>
-          </Paper>
-        )}
         <Stack
           direction="row"
           sx={{
@@ -1541,6 +1452,15 @@ export default function Home() {
           </Typography>
         </Stack>
       </Container>
+      {run && (
+        <BatchProgress
+          key={run.id}
+          completed={run.completed}
+          total={run.total}
+          results={run.results}
+          running={running}
+        />
+      )}
       <Dialog
         open={resetOpen}
         onClose={() => setResetOpen(false)}
