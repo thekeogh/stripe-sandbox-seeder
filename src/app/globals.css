@@ -1,0 +1,25 @@
+* {
+  box-sizing: border-box;
+}
+html {
+  color-scheme: dark;
+}
+body {
+  margin: 0;
+}
+a {
+  color: #b6aeff;
+}
+fieldset {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+fieldset:disabled {
+  opacity: 0.65;
+}
+::selection {
+  background: #695ac5;
+  color: white;
+}
