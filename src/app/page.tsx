@@ -11,6 +11,11 @@ import {
   Collapse,
   Container,
   Divider,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogContentText,
+  DialogActions,
   FormControlLabel,
   IconButton,
   LinearProgress,
@@ -81,6 +86,10 @@ const addressLabels: Record<keyof Address, string> = {
 };
 const STORAGE_KEY = "stripe-seeder-pending-run";
 const SETTINGS_KEY = "stripe-seeder-settings-v1";
+const pageWidth = {
+  width: { xs: "100%", md: "90%" },
+  px: { xs: 2, sm: 3, md: 0 },
+};
 function Section({
   step,
   title,
@@ -149,6 +158,10 @@ export default function Home() {
   const [priceId, setPriceId] = useState("");
   const [couponId, setCouponId] = useState("");
   const [offline, setOffline] = useState(false);
+  const [quantityMode, setQuantityMode] = useState<"random" | "fixed">(
+    "random",
+  );
+  const [quantity, setQuantity] = useState("1");
   const [netD, setNetD] = useState("30");
   const [run, setRun] = useState<Run | null>(null);
   const [running, setRunning] = useState(false);
@@ -158,7 +171,64 @@ export default function Home() {
   const [error, setError] = useState("");
   const [retryable, setRetryable] = useState(false);
   const [storageWarning, setStorageWarning] = useState("");
+  const [resetOpen, setResetOpen] = useState(false);
+  const [keepApiKey, setKeepApiKey] = useState(true);
+  const [resetError, setResetError] = useState("");
   const pending = !!run && run.completed < run.total;
+
+  function resetEverything() {
+    if (runningRef.current || catalogLoading) return;
+    const nextRememberKey = keepApiKey ? rememberKey : true;
+    const nextApiKey = keepApiKey ? apiKey : "";
+    try {
+      // Clear only this app's settings, never unrelated browser storage.
+      sessionStorage.removeItem(STORAGE_KEY);
+      localStorage.setItem(
+        SETTINGS_KEY,
+        JSON.stringify({
+          apiKey: nextRememberKey ? nextApiKey : "",
+          rememberKey: nextRememberKey,
+        }),
+      );
+    } catch {
+      setResetError(
+        "Could not clear saved settings. Check browser storage access and try again.",
+      );
+      return;
+    }
+    initialSettings.current = {};
+    setApiKey(nextApiKey);
+    setRememberKey(nextRememberKey);
+    if (!keepApiKey) {
+      setConnectedKey(null);
+      setCatalog(null);
+    }
+    setCount("10");
+    setNameType("company");
+    setDomain("");
+    setCountry("GB");
+    setOverrides({});
+    setCustomerMetadata(emptyRows());
+    setSubscriptionMetadata(emptyRows());
+    setProductId("");
+    setPriceId("");
+    setCouponId("");
+    setOffline(false);
+    setNetD("30");
+    setQuantityMode("random");
+    setQuantity("1");
+    setRun(null);
+    setRetryable(false);
+    setError("");
+    setCatalogError("");
+    setStorageWarning("");
+    setPreview(null);
+    setPreviewError("");
+    setPreviewTick((t) => t + 1);
+    stopRequested.current = false;
+    setStopping(false);
+    setResetOpen(false);
+  }
 
   const loadCatalog = useCallback(
     async (
@@ -227,6 +297,9 @@ export default function Home() {
       if (Array.isArray(saved.subscriptionMetadata))
         setSubscriptionMetadata(saved.subscriptionMetadata);
       if (typeof saved.offline === "boolean") setOffline(saved.offline);
+      if (saved.quantityMode === "random" || saved.quantityMode === "fixed")
+        setQuantityMode(saved.quantityMode);
+      if (typeof saved.quantity === "string") setQuantity(saved.quantity);
       if (typeof saved.netD === "string") setNetD(saved.netD);
       if (typeof saved.rememberKey === "boolean")
         setRememberKey(saved.rememberKey);
@@ -261,6 +334,8 @@ export default function Home() {
           subscriptionMetadata,
           offline,
           netD,
+          quantityMode,
+          quantity,
           rememberKey,
           apiKey: rememberKey ? apiKey : "",
           productId: catalog
@@ -287,6 +362,8 @@ export default function Home() {
     subscriptionMetadata,
     offline,
     netD,
+    quantity,
+    quantityMode,
     rememberKey,
     apiKey,
     productId,
@@ -474,6 +551,16 @@ export default function Home() {
       setError("Net D must be a whole number of days, zero or greater.");
       return;
     }
+    if (
+      quantityMode === "fixed" &&
+      selectedPrice?.usageType !== "metered" &&
+      (!/^\d+$/.test(quantity) ||
+        !Number.isSafeInteger(Number(quantity)) ||
+        Number(quantity) < 1)
+    ) {
+      setError("Enter a whole-number quantity greater than zero.");
+      return;
+    }
     const parsed = configSchema.safeParse({
       nameType,
       domain,
@@ -482,6 +569,12 @@ export default function Home() {
       customerMetadata,
       subscriptionMetadata,
       priceId,
+      metadataReferenceDate: new Date().toISOString(),
+      quantityMode,
+      quantity:
+        quantityMode === "random" || selectedPrice?.usageType === "metered"
+          ? 1
+          : Number(quantity),
       couponId,
       offline,
       ...(offline ? { daysUntilDue: Number(netD) } : {}),
@@ -522,7 +615,7 @@ export default function Home() {
           bgcolor: "#17181d",
         }}
       >
-        <Container maxWidth="lg">
+        <Container maxWidth={false} sx={pageWidth}>
           <Stack
             direction="row"
             sx={{
@@ -568,8 +661,8 @@ export default function Home() {
       </Box>
       <Container
         component="main"
-        maxWidth="lg"
-        sx={{ pt: { xs: 4, md: 5.5 }, pb: 6 }}
+        maxWidth={false}
+        sx={{ ...pageWidth, pt: { xs: 4, md: 5.5 }, pb: 6 }}
       >
         <Stack
           direction={{ xs: "column", sm: "row" }}
@@ -596,18 +689,39 @@ export default function Home() {
               batch.
             </Typography>
           </Box>
-          <Chip
-            variant="outlined"
-            size="small"
-            label={
-              catalogLoading
-                ? "Connecting…"
-                : catalog
-                  ? "●  Stripe connected"
-                  : "○  Not connected"
-            }
-            color={catalog ? "success" : "default"}
-          />
+          <Stack
+            sx={{
+              gap: 1.5,
+              alignItems: { xs: "flex-start", sm: "flex-end" },
+              flexShrink: 0,
+            }}
+          >
+            <Button
+              variant="outlined"
+              size="small"
+              startIcon={<RefreshRounded />}
+              disabled={!hydrated || running || catalogLoading}
+              onClick={() => {
+                setKeepApiKey(true);
+                setResetError("");
+                setResetOpen(true);
+              }}
+            >
+              Reset Everything
+            </Button>
+            <Chip
+              variant="outlined"
+              size="small"
+              label={
+                catalogLoading
+                  ? "Connecting…"
+                  : catalog
+                    ? "●  Stripe connected"
+                    : "○  Not connected"
+              }
+              color={catalog ? "success" : "default"}
+            />
+          </Stack>
         </Stack>
         <Paper variant="outlined" sx={{ p: 3, mb: 3 }}>
           <Stack
@@ -761,6 +875,7 @@ export default function Home() {
                 <Divider />
                 <MetadataEditor
                   label="Customer"
+                  disabled={running || pending}
                   rows={customerMetadata}
                   onChange={setCustomerMetadata}
                 />
@@ -917,7 +1032,7 @@ export default function Home() {
                   helperText={
                     productId && !prices.length
                       ? "This product has no active recurring prices. Add one in Stripe, then refresh."
-                      : "One unit per subscription; metered prices use reported usage."
+                      : "Choose the billing price for each subscription."
                   }
                   slotProps={{
                     inputLabel: { shrink: true },
@@ -937,6 +1052,59 @@ export default function Home() {
                     </MenuItem>
                   ))}
                 </TextField>
+                <Box>
+                  <Typography
+                    variant="body2"
+                    sx={{ fontWeight: 600, mb: 1.25 }}
+                  >
+                    Quantity per subscription
+                  </Typography>
+                  {selectedPrice?.usageType === "metered" ? (
+                    <Typography variant="body2" color="text.secondary">
+                      Metered price: quantity comes from reported usage.
+                    </Typography>
+                  ) : (
+                    <Stack sx={{ gap: 2 }}>
+                      <ToggleButtonGroup
+                        value={quantityMode}
+                        exclusive
+                        fullWidth
+                        disabled={running || pending}
+                        aria-label="Quantity mode"
+                        onChange={(_, value) => value && setQuantityMode(value)}
+                      >
+                        <ToggleButton
+                          value="random"
+                          sx={{ textTransform: "none" }}
+                        >
+                          Random · 1–999
+                        </ToggleButton>
+                        <ToggleButton
+                          value="fixed"
+                          sx={{ textTransform: "none" }}
+                        >
+                          Fixed quantity
+                        </ToggleButton>
+                      </ToggleButtonGroup>
+                      {quantityMode === "random" ? (
+                        <Typography variant="body2" color="text.secondary">
+                          Each subscription gets its own random quantity between
+                          1 and 999.
+                        </Typography>
+                      ) : (
+                        <TextField
+                          label="Quantity"
+                          type="number"
+                          value={quantity}
+                          onChange={(e) => setQuantity(e.target.value)}
+                          disabled={running || pending}
+                          slotProps={{ htmlInput: { min: 1, step: 1 } }}
+                          helperText="Seats or licences per subscription. The same quantity for every customer."
+                        />
+                      )}
+                    </Stack>
+                  )}
+                </Box>
                 <TextField
                   select
                   label="Coupon"
@@ -955,6 +1123,7 @@ export default function Home() {
                 <Divider />
                 <MetadataEditor
                   label="Subscription"
+                  disabled={running || pending}
                   rows={subscriptionMetadata}
                   onChange={setSubscriptionMetadata}
                 />
@@ -1372,6 +1541,47 @@ export default function Home() {
           </Typography>
         </Stack>
       </Container>
+      <Dialog
+        open={resetOpen}
+        onClose={() => setResetOpen(false)}
+        aria-labelledby="reset-title"
+        aria-describedby="reset-description"
+        maxWidth="xs"
+        fullWidth
+      >
+        <DialogTitle id="reset-title">Reset Everything?</DialogTitle>
+        <DialogContent>
+          <DialogContentText id="reset-description">
+            Reset all form choices and clear saved batch progress and results.
+            Customers and subscriptions already created in Stripe will remain.
+          </DialogContentText>
+          <FormControlLabel
+            sx={{ mt: 2 }}
+            control={
+              <Checkbox
+                checked={keepApiKey}
+                onChange={(e) => setKeepApiKey(e.target.checked)}
+              />
+            }
+            label="Do not clear API key"
+          />
+          {resetError && (
+            <Alert severity="error" sx={{ mt: 1 }}>
+              {resetError}
+            </Alert>
+          )}
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2.5 }}>
+          <Button onClick={() => setResetOpen(false)}>Cancel</Button>
+          <Button
+            variant="contained"
+            onClick={resetEverything}
+            disabled={running || catalogLoading}
+          >
+            OK
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 }

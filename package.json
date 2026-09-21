@@ -3,12 +3,13 @@
   "version": "1.0.0",
   "description": "",
   "scripts": {
-    "dev": "next dev --hostname 127.0.0.1 --port 43187",
+    "dev": "node scripts/dev.mjs",
     "build": "next build",
     "start": "next start --hostname 127.0.0.1 --port 43187",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test tests/*.test.ts",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "dev:server": "next dev --hostname 127.0.0.1 --port 43187"
   },
   "keywords": [],
   "author": "",

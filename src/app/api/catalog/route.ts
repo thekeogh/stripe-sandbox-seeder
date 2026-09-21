@@ -42,6 +42,7 @@ export async function POST(request: Request) {
             id: p.id,
             productId: typeof p.product === "string" ? p.product : p.product.id,
             currency: p.currency,
+            usageType: p.recurring!.usage_type,
             label: `${p.nickname ? p.nickname + " · " : ""}${amount} / ${p.recurring!.interval_count > 1 ? p.recurring!.interval_count + " " : ""}${p.recurring!.interval} · ${p.id}`,
           });
         }

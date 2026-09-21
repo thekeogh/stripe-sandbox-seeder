@@ -1,7 +1,8 @@
 import Stripe from "stripe";
 import type { z } from "zod";
-import { seedSchema, metadataObject } from "./schema";
-import { fakeCustomer } from "./fake";
+import { seedSchema } from "./schema";
+import { fakeCustomer, fakeQuantity } from "./fake";
+import { generateMetadata } from "./generate-metadata";
 import { errorMessage } from "./stripe";
 
 export class SeedError extends Error {
@@ -52,6 +53,18 @@ export async function seedOne(
       throw new SeedError("Coupon and price currencies must match.", false);
   }
   const profile = fakeCustomer(config, key);
+  const customerMetadata = generateMetadata(
+    config.customerMetadata,
+    `${key}:customer`,
+    config.country,
+    config.metadataReferenceDate,
+  );
+  const subscriptionMetadata = generateMetadata(
+    config.subscriptionMetadata,
+    `${key}:subscription`,
+    config.country,
+    config.metadataReferenceDate,
+  );
   let customerId: string | undefined;
   try {
     const paymentMethod = config.offline
@@ -64,7 +77,7 @@ export async function seedOne(
       {
         ...profile,
         metadata: {
-          ...metadataObject(config.customerMetadata),
+          ...customerMetadata,
           ...(config.offline ? { isInvoiced: "true" } : {}),
         },
         ...(paymentMethod
@@ -77,18 +90,22 @@ export async function seedOne(
       options("customer"),
     );
     customerId = customer.id;
+    const quantity =
+      price.recurring.usage_type === "metered"
+        ? null
+        : config.quantityMode === "random"
+          ? fakeQuantity(key)
+          : config.quantity;
     const subscription = await stripe.subscriptions.create(
       {
         customer: customer.id,
         items: [
           {
             price: price.id,
-            ...(price.recurring.usage_type === "metered"
-              ? {}
-              : { quantity: 1 }),
+            ...(quantity === null ? {} : { quantity }),
           },
         ],
-        metadata: metadataObject(config.subscriptionMetadata),
+        metadata: subscriptionMetadata,
         ...(config.couponId
           ? { discounts: [{ coupon: config.couponId }] }
           : {}),
@@ -109,6 +126,7 @@ export async function seedOne(
     return {
       customerId,
       subscriptionId: subscription.id,
+      quantity,
       name: profile.name,
       email: profile.email,
       status: subscription.status,

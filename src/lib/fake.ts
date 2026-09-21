@@ -18,7 +18,7 @@ import {
 } from "@faker-js/faker";
 import { createHash } from "node:crypto";
 import type { Country, ProfileConfig } from "./schema";
-const locales = {
+export const locales = {
   GB: en_GB,
   US: en_US,
   CA: en_CA,
@@ -111,4 +111,13 @@ export function fakeCustomer(config: ProfileConfig, seed: string) {
       country: config.country,
     },
   };
+}
+
+// Separate seeded generator: retries keep the same quantity without changing profile data.
+export function fakeQuantity(seed: string) {
+  const faker = new Faker({ locale: [en, base] });
+  faker.seed(
+    createHash("sha256").update(`${seed}:quantity`).digest().readUInt32BE(0),
+  );
+  return faker.number.int({ min: 1, max: 999 });
 }

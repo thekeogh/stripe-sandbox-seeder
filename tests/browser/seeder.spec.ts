@@ -7,6 +7,7 @@ const catalog = {
       productId: "prod_demo",
       currency: "gbp",
       label: "£20.00 / month",
+      usageType: "licensed",
     },
   ],
   coupons: [
@@ -49,6 +50,12 @@ test("connection, every form preference, metadata keyboard controls, reload, and
   await page.getByRole("button", { name: "Connect", exact: true }).click();
   await expect(page.getByText("●  Stripe connected")).toBeVisible();
   await page.getByLabel("Number of customers").fill("2");
+  await expect(
+    page.getByRole("button", { name: "Random · 1–999" }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await page.getByRole("button", { name: "Fixed quantity" }).click();
+  await expect(page.getByLabel("Quantity", { exact: true })).toHaveValue("1");
+  await page.getByLabel("Quantity", { exact: true }).fill("5");
   await page.getByRole("button", { name: "First & last name" }).click();
   await page.getByLabel("Email domain").fill("@whatever.com");
   await page
@@ -96,6 +103,7 @@ test("connection, every form preference, metadata keyboard controls, reload, and
     "sk_test_browser_fixture",
   );
   await expect(page.getByLabel("Number of customers")).toHaveValue("2");
+  await expect(page.getByLabel("Quantity", { exact: true })).toHaveValue("5");
   await expect(
     page.getByRole("button", { name: "First & last name" }),
   ).toHaveAttribute("aria-pressed", "true");
@@ -124,6 +132,8 @@ test("connection, every form preference, metadata keyboard controls, reload, and
   expect(payloads[0].config).toMatchObject({
     offline: true,
     daysUntilDue: 45,
+    quantity: 5,
+    quantityMode: "fixed",
     domain: "whatever.com",
     couponId: "coupon_demo",
     addressOverrides: { line1: "12 Test Street" },
@@ -160,11 +170,9 @@ test("live keys are rejected, automatic batch validates count, interrupted reque
   await page.getByLabel("Secret API key").fill("sk_live_fixture");
   await page.getByRole("button", { name: "Connect", exact: true }).click();
   await expect(
-    page
-      .getByRole("alert")
-      .filter({
-        hasText: "Only Stripe test / sandbox secret keys are allowed.",
-      }),
+    page.getByRole("alert").filter({
+      hasText: "Only Stripe test / sandbox secret keys are allowed.",
+    }),
   ).toBeVisible();
   await page.route("**/api/catalog", (route) =>
     route.fulfill({ json: catalog }),
@@ -204,6 +212,7 @@ test("live keys are rejected, automatic batch validates count, interrupted reque
   await expect(page.getByText("Your sandbox is ready")).toBeVisible();
   expect(payloads[0]).toEqual(payloads[1]);
   expect(payloads[0].config.offline).toBe(false);
+  expect(payloads[0].config.quantityMode).toBe("random");
   await page.getByLabel(/Remember API key/).uncheck();
   await page.reload();
   await expect(page.getByLabel("Secret API key")).toHaveValue("");
@@ -212,4 +221,290 @@ test("live keys are rejected, automatic batch validates count, interrupted reque
   );
   expect(saved.apiKey).toBe("");
   expect(saved.priceId).toBe("price_demo");
+});
+
+test("Faker metadata controls persist and submit alongside custom text", async ({
+  page,
+}) => {
+  await page.route("**/api/catalog", (route) =>
+    route.fulfill({ json: catalog }),
+  );
+  let submitted: any;
+  await page.route("**/api/seed", (route) => {
+    submitted = route.request().postDataJSON();
+    return route.fulfill({
+      json: {
+        customerId: "cus_meta",
+        subscriptionId: "sub_meta",
+        name: "Test",
+        email: "test@example.com",
+        status: "active",
+      },
+    });
+  });
+  await page.goto("/");
+  await page.getByLabel("Secret API key").fill("sk_test_browser_fixture");
+  await page.getByRole("button", { name: "Connect", exact: true }).click();
+  await page.getByLabel("Number of customers").fill("1");
+  await page.getByRole("combobox", { name: "Product", exact: true }).click();
+  await page.getByRole("option", { name: "Starter", exact: true }).click();
+  const selectType = async (label: string, option: string) => {
+    await page.getByRole("combobox", { name: label, exact: true }).click();
+    await page.getByRole("option", { name: option, exact: true }).click();
+  };
+  await expect(
+    page.getByRole("combobox", { name: "Customer metadata type 1" }),
+  ).toHaveText("Custom text");
+  await page
+    .getByLabel("Customer metadata key 1", { exact: true })
+    .fill("externalId");
+  await page
+    .getByLabel("Customer metadata value 1", { exact: true })
+    .fill("remember-me");
+  await selectType("Customer metadata type 1", "UUID");
+  await expect(
+    page.getByLabel("Customer metadata value 1", { exact: true }),
+  ).toHaveCount(0);
+  await selectType("Customer metadata type 1", "Custom text");
+  await expect(
+    page.getByLabel("Customer metadata value 1", { exact: true }),
+  ).toHaveValue("remember-me");
+  await selectType("Customer metadata type 1", "UUID");
+  // Enter selects an option without adding a row.
+  await page
+    .getByRole("combobox", { name: "Customer metadata type 1" })
+    .press("Enter");
+  await page.getByRole("option", { name: "UUID", exact: true }).press("Enter");
+  await expect(
+    page.getByLabel("Customer metadata key 2", { exact: true }),
+  ).toHaveCount(0);
+  await page
+    .getByLabel("Customer metadata key 1", { exact: true })
+    .press("Enter");
+  await expect(
+    page.getByLabel("Customer metadata key 2", { exact: true }),
+  ).toBeFocused();
+  await page
+    .getByLabel("Customer metadata key 2", { exact: true })
+    .fill("score");
+  await selectType("Customer metadata type 2", "Decimal number");
+  await page
+    .getByLabel("Customer metadata min 2", { exact: true })
+    .fill("1.25");
+  await page
+    .getByLabel("Customer metadata max 2", { exact: true })
+    .fill("9.75");
+  await page
+    .getByRole("button", { name: "Add Customer metadata row after 2" })
+    .click();
+  await page
+    .getByLabel("Customer metadata key 3", { exact: true })
+    .fill("source");
+  await page
+    .getByLabel("Customer metadata value 3", { exact: true })
+    .fill("constant");
+  await page
+    .getByLabel("Subscription metadata key 1", { exact: true })
+    .fill("code");
+  await selectType("Subscription metadata type 1", "Short alphanumeric ID");
+  await page
+    .getByLabel("Subscription metadata length 1", { exact: true })
+    .fill("8");
+  await page
+    .getByRole("button", { name: "Add Subscription metadata row after 1" })
+    .click();
+  await page
+    .getByLabel("Subscription metadata key 2", { exact: true })
+    .fill("date");
+  await selectType("Subscription metadata type 2", "Future date");
+  await page.reload();
+  await expect(
+    page.getByRole("combobox", { name: "Customer metadata type 1" }),
+  ).toHaveText("UUID");
+  await expect(
+    page.getByLabel("Customer metadata min 2", { exact: true }),
+  ).toHaveValue("1.25");
+  await expect(
+    page.getByLabel("Customer metadata max 2", { exact: true }),
+  ).toHaveValue("9.75");
+  await expect(
+    page.getByLabel("Subscription metadata length 1", { exact: true }),
+  ).toHaveValue("8");
+  await expect(
+    page.getByRole("combobox", { name: "Subscription metadata type 2" }),
+  ).toHaveText("Future date");
+  await page
+    .getByRole("button", { name: "Seed customers", exact: true })
+    .click();
+  await expect(page.getByText("Your sandbox is ready")).toBeVisible();
+  expect(submitted.config.customerMetadata).toEqual([
+    { key: "externalId", value: "remember-me", type: "uuid" },
+    { key: "score", value: "", type: "decimal", min: "1.25", max: "9.75" },
+    { key: "source", value: "constant" },
+  ]);
+  expect(submitted.config.metadataReferenceDate).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  await page.setViewportSize({ width: 1440, height: 1050 });
+  await page.evaluate(() => window.scrollTo(0, 0));
+  const keyBox = await page
+    .getByLabel("Customer metadata key 3", { exact: true })
+    .boundingBox();
+  const typeBox = await page
+    .getByRole("combobox", { name: "Customer metadata type 3", exact: true })
+    .boundingBox();
+  const valueBox = await page
+    .getByLabel("Customer metadata value 3", { exact: true })
+    .boundingBox();
+  expect(keyBox!.x).toBeLessThan(typeBox!.x);
+  expect(typeBox!.x).toBeLessThan(valueBox!.x);
+  await page.screenshot({
+    path: "test-results/metadata-desktop.png",
+    fullPage: true,
+    animations: "disabled",
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    )
+    .toBe(true);
+  await page.screenshot({
+    path: "test-results/metadata-mobile.png",
+    fullPage: true,
+    animations: "disabled",
+  });
+});
+
+test("reset confirms, restores defaults, clears pending batches and optionally forgets the API key", async ({
+  page,
+}) => {
+  await page.route("**/api/catalog", (route) =>
+    route.fulfill({ json: catalog }),
+  );
+  await page.goto("/");
+  const saved = {
+    apiKey: "sk_test_reset_fixture",
+    rememberKey: true,
+    count: "42",
+    nameType: "person",
+    domain: "reset.example.com",
+    country: "US",
+    overrides: { line1: "Keep until confirmed" },
+    customerMetadata: [{ key: "id", value: "", type: "uuid" }],
+    subscriptionMetadata: [{ key: "source", value: "test" }],
+    productId: "prod_demo",
+    priceId: "price_demo",
+    couponId: "coupon_demo",
+    offline: true,
+    netD: "90",
+    quantityMode: "fixed",
+    quantity: "27",
+  };
+  await page.evaluate((settings) => {
+    localStorage.setItem("stripe-seeder-settings-v1", JSON.stringify(settings));
+    localStorage.setItem("unrelated-setting", "keep");
+    sessionStorage.setItem(
+      "stripe-seeder-pending-run",
+      JSON.stringify({
+        id: "50091123-d9dd-4d0c-a6c3-a713290af934",
+        total: 42,
+        completed: 0,
+        createdAt: Date.now(),
+        results: [],
+        keyFingerprint: "fixture",
+        config: {
+          ...settings,
+          addressOverrides: settings.overrides,
+          daysUntilDue: 90,
+          quantity: 27,
+        },
+      }),
+    );
+  }, saved);
+  await page.reload();
+  await expect(page.getByText("●  Stripe connected")).toBeVisible();
+  await expect(page.getByText("Batch paused", { exact: true })).toBeVisible();
+  await page
+    .getByRole("button", { name: "Reset Everything", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByLabel("Do not clear API key")).toBeChecked();
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(page.getByLabel("Number of customers")).toHaveValue("42");
+  expect(
+    await page.evaluate(() =>
+      sessionStorage.getItem("stripe-seeder-pending-run"),
+    ),
+  ).not.toBeNull();
+  await page
+    .getByRole("button", { name: "Reset Everything", exact: true })
+    .click();
+  await dialog.getByRole("button", { name: "OK", exact: true }).click();
+  await expect(dialog).toBeHidden();
+  await expect(page.getByLabel("Secret API key")).toHaveValue(saved.apiKey);
+  await expect(page.getByLabel("Number of customers")).toHaveValue("10");
+  await expect(
+    page.getByRole("button", { name: "Company", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByLabel("Email domain")).toHaveValue("");
+  await expect(
+    page.getByRole("combobox", { name: "Country", exact: true }),
+  ).toHaveText("United Kingdom");
+  await expect(
+    page.getByLabel("Customer metadata key 1", { exact: true }),
+  ).toHaveValue("");
+  await expect(
+    page.getByRole("combobox", { name: "Customer metadata type 1" }),
+  ).toHaveText("Custom text");
+  await expect(
+    page.getByLabel("Subscription metadata value 1", { exact: true }),
+  ).toHaveValue("");
+  await expect(
+    page.getByRole("button", { name: "Random · 1–999" }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await expect(
+    page.getByLabel("Offline/Invoice payment method"),
+  ).not.toBeChecked();
+  await expect(page.getByText("Batch paused", { exact: true })).toHaveCount(0);
+  const storage = await page.evaluate(() => ({
+    settings: JSON.parse(localStorage.getItem("stripe-seeder-settings-v1")!),
+    pending: sessionStorage.getItem("stripe-seeder-pending-run"),
+    unrelated: localStorage.getItem("unrelated-setting"),
+  }));
+  expect(storage.pending).toBeNull();
+  expect(storage.unrelated).toBe("keep");
+  expect(storage.settings).toMatchObject({
+    apiKey: saved.apiKey,
+    productId: "",
+    priceId: "",
+    couponId: "",
+    overrides: {},
+    netD: "30",
+    quantity: "1",
+  });
+  await page.reload();
+  await expect(page.getByText("●  Stripe connected")).toBeVisible();
+  await expect(page.getByLabel("Number of customers")).toHaveValue("10");
+  await page
+    .getByRole("button", { name: "Reset Everything", exact: true })
+    .click();
+  await dialog.getByLabel("Do not clear API key").uncheck();
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(page.getByLabel("Secret API key")).toHaveValue(saved.apiKey);
+  await page
+    .getByRole("button", { name: "Reset Everything", exact: true })
+    .click();
+  await expect(dialog.getByLabel("Do not clear API key")).toBeChecked();
+  await dialog.getByLabel("Do not clear API key").uncheck();
+  await dialog.getByRole("button", { name: "OK", exact: true }).click();
+  await expect(page.getByLabel("Secret API key")).toHaveValue("");
+  await expect(page.getByText("○  Not connected")).toBeVisible();
+  expect(
+    await page.evaluate(() =>
+      localStorage.getItem("stripe-seeder-settings-v1"),
+    ),
+  ).not.toContain(saved.apiKey);
+  await page.reload();
+  await expect(page.getByLabel("Secret API key")).toHaveValue("");
 });

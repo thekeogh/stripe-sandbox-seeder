@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { metadataSchema } from "./metadata";
+export type { MetadataRow } from "./metadata";
 
 export const countries = {
   GB: "United Kingdom",
@@ -27,47 +29,6 @@ export const addressSchema = z.object({
   postal_code: z.string().max(20),
 });
 export type Address = z.infer<typeof addressSchema>;
-export type MetadataRow = { key: string; value: string };
-const metadataSchema = z
-  .array(
-    z.object({
-      key: z
-        .string()
-        .trim()
-        .max(40)
-        .refine(
-          (k) => !/[\[\]]/.test(k),
-          "Metadata keys cannot contain brackets.",
-        ),
-      value: z.string().max(500),
-    }),
-  )
-  .superRefine((rows, ctx) => {
-    const keys = new Set<string>();
-    for (const row of rows) {
-      if (!row.key && row.value)
-        ctx.addIssue({
-          code: "custom",
-          message: "Every metadata value needs a key.",
-        });
-      if (row.key && !row.value)
-        ctx.addIssue({
-          code: "custom",
-          message: "Every metadata key needs a value.",
-        });
-      if (row.key && keys.has(row.key))
-        ctx.addIssue({
-          code: "custom",
-          message: `Duplicate metadata key: ${row.key}`,
-        });
-      if (row.key) keys.add(row.key);
-    }
-    if (keys.size > 50)
-      ctx.addIssue({
-        code: "custom",
-        message: "Stripe allows 50 metadata entries.",
-      });
-  });
 export const profileSchema = z.object({
   nameType: z.enum(["company", "person"]),
   domain: z
@@ -89,12 +50,31 @@ export const configSchema = profileSchema
   .extend({
     priceId: z.string().startsWith("price_"),
     couponId: z.string(),
+    // Missing mode means an older batch, which used a fixed quantity.
+    quantityMode: z.enum(["random", "fixed"]).default("fixed"),
+    quantity: z
+      .number()
+      .int()
+      .positive()
+      .refine(Number.isSafeInteger)
+      .default(1),
+    metadataReferenceDate: z.iso.datetime().optional(),
     customerMetadata: metadataSchema,
     subscriptionMetadata: metadataSchema,
     offline: z.boolean(),
     daysUntilDue: z.number().int().min(0).max(730).optional(),
   })
   .superRefine((v, ctx) => {
+    if (
+      !v.metadataReferenceDate &&
+      [...v.customerMetadata, ...v.subscriptionMetadata].some(
+        (row) => row.type === "pastDate" || row.type === "futureDate",
+      )
+    )
+      ctx.addIssue({
+        code: "custom",
+        message: "A reference date is required for generated metadata dates.",
+      });
     if (v.offline && v.daysUntilDue === undefined)
       ctx.addIssue({ code: "custom", message: "Enter Net D payment terms." });
     if (
@@ -114,11 +94,15 @@ export const seedSchema = z.object({
 });
 export type SeedConfig = z.infer<typeof configSchema>;
 export type ProfileConfig = z.infer<typeof profileSchema>;
-export const metadataObject = (rows: MetadataRow[]) =>
-  Object.fromEntries(rows.filter((r) => r.key).map((r) => [r.key, r.value]));
 export type Catalog = {
   products: { id: string; name: string }[];
-  prices: { id: string; productId: string; label: string; currency: string }[];
+  prices: {
+    id: string;
+    productId: string;
+    label: string;
+    currency: string;
+    usageType: string;
+  }[];
   coupons: {
     id: string;
     label: string;

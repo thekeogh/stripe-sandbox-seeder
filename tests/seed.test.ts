@@ -20,6 +20,8 @@ const config: SeedConfig = {
   customerMetadata: [{ key: "team", value: "test" }],
   subscriptionMetadata: [{ key: "source", value: "sandbox" }],
   priceId: "price_test",
+  quantity: 1,
+  quantityMode: "fixed",
   couponId: "",
   offline: false,
 };
@@ -28,7 +30,11 @@ const input = {
   index: 0,
   config,
 };
-function mockStripe(failure?: Error, cleanupFailure = false) {
+function mockStripe(
+  failure?: Error,
+  cleanupFailure = false,
+  usageType = "licensed",
+) {
   const calls: { method: string; data: any; options?: any }[] = [];
   const record =
     (method: string, result: any) => async (data: any, options?: any) => {
@@ -42,7 +48,7 @@ function mockStripe(failure?: Error, cleanupFailure = false) {
         active: true,
         livemode: false,
         currency: "gbp",
-        recurring: { usage_type: "licensed" },
+        recurring: { usage_type: usageType },
         product: { id: "prod_test", active: true },
       }),
     },
@@ -294,4 +300,124 @@ test("US addresses keep cities, state codes and five-digit ZIPs together", () =>
     "override",
   );
   assert.equal(address.postal_code, "10001");
+});
+
+test("quantity is sent for both card and invoice subscriptions and omitted for metered prices", async () => {
+  for (const offline of [false, true]) {
+    const { stripe, calls } = mockStripe();
+    await seedOne(stripe, {
+      ...input,
+      config: {
+        ...config,
+        quantity: 7,
+        offline,
+        daysUntilDue: offline ? 30 : undefined,
+      },
+    });
+    assert.equal(
+      calls.find((c) => c.method === "subscription")!.data.items[0].quantity,
+      7,
+    );
+  }
+  const { stripe, calls } = mockStripe(undefined, false, "metered");
+  await seedOne(stripe, { ...input, config: { ...config, quantity: 7 } });
+  assert.equal(
+    Object.hasOwn(
+      calls.find((c) => c.method === "subscription")!.data.items[0],
+      "quantity",
+    ),
+    false,
+  );
+});
+
+test("quantity defaults for older saved batches and rejects invalid quantities", () => {
+  const { quantity: _quantity, ...legacy } = config;
+  assert.equal(configSchema.parse(legacy).quantity, 1);
+  for (const quantity of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, "5", null]) {
+    assert.equal(
+      configSchema.safeParse({ ...config, quantity }).success,
+      false,
+    );
+  }
+});
+
+test("random quantity varies per subscription, stays in range and remains stable on retry", async () => {
+  const quantities = new Set<number>();
+  for (let index = 0; index < 25; index++) {
+    const request = {
+      ...input,
+      index,
+      config: { ...config, quantityMode: "random" as const },
+    };
+    const first = mockStripe(),
+      retry = mockStripe();
+    const a = await seedOne(first.stripe, request);
+    const b = await seedOne(retry.stripe, request);
+    assert.equal(a.quantity, b.quantity);
+    assert(
+      a.quantity !== null &&
+        Number.isInteger(a.quantity) &&
+        a.quantity >= 1 &&
+        a.quantity <= 999,
+    );
+    quantities.add(a.quantity);
+    const customer = first.calls.find((c) => c.method === "customer")!;
+    const subscription = first.calls.find((c) => c.method === "subscription")!;
+    assert.equal(customer.data.payment_method, "pm_test");
+    assert.equal(
+      customer.data.invoice_settings.default_payment_method,
+      "pm_test",
+    );
+    assert.equal(subscription.data.default_payment_method, "pm_test");
+    assert.equal(subscription.data.items[0].quantity, a.quantity);
+    assert(
+      first.calls.findIndex((c) => c.method === "payment") <
+        first.calls.indexOf(customer),
+    );
+    assert(first.calls.indexOf(customer) < first.calls.indexOf(subscription));
+  }
+  assert(quantities.size > 1);
+});
+
+test("generated metadata is resolved per object before writes and invoice flag overrides generated entries", async () => {
+  const generatedConfig: SeedConfig = {
+    ...config,
+    offline: true,
+    daysUntilDue: 30,
+    metadataReferenceDate: "2026-09-21T12:00:00.000Z",
+    customerMetadata: [
+      { key: "id", type: "uuid", value: "" },
+      { key: "isInvoiced", type: "boolean", value: "" },
+    ],
+    subscriptionMetadata: [
+      { key: "id", type: "uuid", value: "" },
+      { key: "joined", type: "pastDate", value: "" },
+    ],
+  };
+  const first = mockStripe(),
+    retry = mockStripe(),
+    next = mockStripe();
+  await seedOne(first.stripe, { ...input, config: generatedConfig });
+  await seedOne(retry.stripe, { ...input, config: generatedConfig });
+  await seedOne(next.stripe, { ...input, index: 1, config: generatedConfig });
+  assert.deepEqual(first.calls, retry.calls);
+  const customer = first.calls.find((c) => c.method === "customer")!.data
+    .metadata;
+  const subscription = first.calls.find((c) => c.method === "subscription")!
+    .data.metadata;
+  assert.equal(customer.isInvoiced, "true");
+  assert.equal(subscription.isInvoiced, undefined);
+  assert.notEqual(customer.id, subscription.id);
+  assert.notEqual(
+    customer.id,
+    next.calls.find((c) => c.method === "customer")!.data.metadata.id,
+  );
+  assert.match(subscription.joined, /^\d{4}-\d{2}-\d{2}$/);
+  assert.equal(
+    configSchema.safeParse({
+      ...generatedConfig,
+      metadataReferenceDate: undefined,
+    }).success,
+    false,
+  );
 });
