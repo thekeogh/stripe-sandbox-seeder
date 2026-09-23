@@ -108,6 +108,9 @@ export async function seedOne(
           },
         ],
         metadata: subscriptionMetadata,
+        ...(config.trialDays !== undefined
+          ? { trial_period_days: config.trialDays }
+          : {}),
         ...(config.couponId
           ? { discounts: [{ coupon: config.couponId }] }
           : {}),

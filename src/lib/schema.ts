@@ -58,6 +58,12 @@ export const configSchema = profileSchema
       .optional(),
     priceId: z.string().startsWith("price_"),
     couponId: z.string(),
+    trialDays: z
+      .number()
+      .int()
+      .positive()
+      .refine(Number.isSafeInteger)
+      .optional(),
     // Missing mode means an older batch, which used a fixed quantity.
     quantityMode: z.enum(["random", "fixed"]).default("fixed"),
     quantity: z

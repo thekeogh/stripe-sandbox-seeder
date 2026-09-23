@@ -51,6 +51,8 @@ test("connection, every form preference, metadata keyboard controls, reload, and
   await expect(page.getByText("●  Stripe connected")).toBeVisible();
   await page.getByLabel("Number of customers").fill("2");
   await page.getByLabel("Test Clock ID").fill("clock_example123");
+  await expect(page.getByLabel("Free trial (days)")).toHaveValue("");
+  await page.getByLabel("Free trial (days)").fill("30");
   await expect(
     page.getByRole("button", { name: "Random · 1–999" }),
   ).toHaveAttribute("aria-pressed", "true");
@@ -108,6 +110,7 @@ test("connection, every form preference, metadata keyboard controls, reload, and
     "clock_example123",
   );
   await expect(page.getByLabel("Quantity", { exact: true })).toHaveValue("5");
+  await expect(page.getByLabel("Free trial (days)")).toHaveValue("30");
   await expect(
     page.getByRole("button", { name: "First & last name" }),
   ).toHaveAttribute("aria-pressed", "true");
@@ -162,6 +165,7 @@ test("connection, every form preference, metadata keyboard controls, reload, and
     quantity: 5,
     quantityMode: "fixed",
     testClockId: "clock_example123",
+    trialDays: 30,
     domain: "whatever.com",
     couponId: "coupon_demo",
     addressOverrides: { line1: "12 Test Street" },
@@ -241,6 +245,7 @@ test("live keys are rejected, automatic batch validates count, interrupted reque
   expect(payloads[0]).toEqual(payloads[1]);
   expect(payloads[0].config.offline).toBe(false);
   expect(payloads[0].config.quantityMode).toBe("random");
+  expect(payloads[0].config).not.toHaveProperty("trialDays");
   await page.getByLabel(/Remember API key/).uncheck();
   await page.reload();
   await expect(page.getByLabel("Secret API key")).toHaveValue("");
@@ -427,6 +432,7 @@ test("reset confirms, restores defaults, clears pending batches and optionally f
     couponId: "coupon_demo",
     offline: true,
     netD: "90",
+    trialDays: "60",
     quantityMode: "fixed",
     quantity: "27",
   };
@@ -446,6 +452,7 @@ test("reset confirms, restores defaults, clears pending batches and optionally f
           ...settings,
           addressOverrides: settings.overrides,
           daysUntilDue: 90,
+          trialDays: 60,
           quantity: 27,
         },
       }),
@@ -462,6 +469,7 @@ test("reset confirms, restores defaults, clears pending batches and optionally f
   await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(page.getByLabel("Number of customers")).toHaveValue("42");
   await expect(page.getByLabel("Test Clock ID")).toHaveValue("clock_reset123");
+  await expect(page.getByLabel("Free trial (days)")).toHaveValue("60");
   expect(
     await page.evaluate(() =>
       sessionStorage.getItem("stripe-seeder-pending-run"),
@@ -475,6 +483,7 @@ test("reset confirms, restores defaults, clears pending batches and optionally f
   await expect(page.getByLabel("Secret API key")).toHaveValue(saved.apiKey);
   await expect(page.getByLabel("Number of customers")).toHaveValue("10");
   await expect(page.getByLabel("Test Clock ID")).toHaveValue("");
+  await expect(page.getByLabel("Free trial (days)")).toHaveValue("");
   await expect(
     page.getByRole("button", { name: "Company", exact: true }),
   ).toHaveAttribute("aria-pressed", "true");
@@ -513,12 +522,14 @@ test("reset confirms, restores defaults, clears pending batches and optionally f
     couponId: "",
     overrides: {},
     netD: "30",
+    trialDays: "",
     quantity: "1",
   });
   await page.reload();
   await expect(page.getByText("●  Stripe connected")).toBeVisible();
   await expect(page.getByLabel("Number of customers")).toHaveValue("10");
   await expect(page.getByLabel("Test Clock ID")).toHaveValue("");
+  await expect(page.getByLabel("Free trial (days)")).toHaveValue("");
   await page
     .getByRole("button", { name: "Reset Everything", exact: true })
     .click();

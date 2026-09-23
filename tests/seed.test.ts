@@ -464,3 +464,56 @@ test("clock IDs are optional, trimmed and validated before Stripe writes", () =>
     );
   }
 });
+
+test("optional free trials apply to card and invoice subscriptions after payment setup", async () => {
+  for (const offline of [false, true]) {
+    for (const trialDays of [undefined, 30]) {
+      const { stripe, calls } = mockStripe();
+      await seedOne(stripe, {
+        ...input,
+        config: { ...config, offline, daysUntilDue: 30, trialDays },
+      });
+      const sub = calls.find((c) => c.method === "subscription")!.data;
+      assert.equal(sub.trial_period_days, trialDays);
+      assert.equal(
+        Object.hasOwn(sub, "trial_period_days"),
+        trialDays !== undefined,
+      );
+      if (!offline) {
+        assert.deepEqual(
+          calls.map((c) => c.method),
+          ["price", "payment", "customer", "subscription"],
+        );
+        const customer = calls.find((c) => c.method === "customer")!.data;
+        assert.equal(
+          customer.invoice_settings.default_payment_method,
+          "pm_test",
+        );
+        assert.equal(sub.default_payment_method, "pm_test");
+      }
+    }
+  }
+});
+test("trial days are optional positive whole numbers", () => {
+  for (const trialDays of [undefined, 1, 30]) {
+    assert.equal(
+      configSchema.safeParse({ ...config, trialDays }).success,
+      true,
+    );
+  }
+  for (const trialDays of [
+    0,
+    -1,
+    1.5,
+    "30",
+    "",
+    null,
+    Infinity,
+    Number.MAX_SAFE_INTEGER + 1,
+  ]) {
+    assert.equal(
+      configSchema.safeParse({ ...config, trialDays }).success,
+      false,
+    );
+  }
+});

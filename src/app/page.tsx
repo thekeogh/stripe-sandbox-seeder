@@ -158,6 +158,7 @@ export default function Home() {
   );
   const [quantity, setQuantity] = useState("1");
   const [netD, setNetD] = useState("30");
+  const [trialDays, setTrialDays] = useState("");
   const [run, setRun] = useState<Run | null>(null);
   const [running, setRunning] = useState(false);
   const runningRef = useRef(false);
@@ -211,6 +212,7 @@ export default function Home() {
     setCouponId("");
     setOffline(false);
     setNetD("30");
+    setTrialDays("");
     setQuantityMode("random");
     setQuantity("1");
     setRun(null);
@@ -297,6 +299,7 @@ export default function Home() {
         setQuantityMode(saved.quantityMode);
       if (typeof saved.quantity === "string") setQuantity(saved.quantity);
       if (typeof saved.netD === "string") setNetD(saved.netD);
+      if (typeof saved.trialDays === "string") setTrialDays(saved.trialDays);
       if (typeof saved.rememberKey === "boolean")
         setRememberKey(saved.rememberKey);
       if (typeof saved.apiKey === "string") setApiKey(saved.apiKey);
@@ -332,6 +335,7 @@ export default function Home() {
           subscriptionMetadata,
           offline,
           netD,
+          trialDays,
           quantityMode,
           quantity,
           rememberKey,
@@ -361,6 +365,7 @@ export default function Home() {
     subscriptionMetadata,
     offline,
     netD,
+    trialDays,
     quantity,
     quantityMode,
     rememberKey,
@@ -561,6 +566,17 @@ export default function Home() {
       setError("Enter a whole-number quantity greater than zero.");
       return;
     }
+    if (
+      trialDays !== "" &&
+      (!/^\d+$/.test(trialDays) ||
+        !Number.isSafeInteger(Number(trialDays)) ||
+        Number(trialDays) < 1)
+    ) {
+      setError(
+        "Free trial must be a whole number of days greater than zero, or left blank.",
+      );
+      return;
+    }
     const parsed = configSchema.safeParse({
       testClockId,
       nameType,
@@ -579,6 +595,7 @@ export default function Home() {
       couponId,
       offline,
       ...(offline ? { daysUntilDue: Number(netD) } : {}),
+      ...(trialDays !== "" ? { trialDays: Number(trialDays) } : {}),
     });
     if (!parsed.success) {
       setError(parsed.error.issues.map((i) => i.message).join(" "));
@@ -1130,6 +1147,15 @@ export default function Home() {
                     </MenuItem>
                   ))}
                 </TextField>
+                <TextField
+                  label="Free trial (days)"
+                  type="number"
+                  value={trialDays}
+                  onChange={(e) => setTrialDays(e.target.value)}
+                  disabled={running || pending}
+                  slotProps={{ htmlInput: { min: 1, step: 1 } }}
+                  helperText="Leave blank for no trial, or enter days (e.g. 30). Applies to every subscription in the batch."
+                />
                 <Divider />
                 <MetadataEditor
                   label="Subscription"
