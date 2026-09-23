@@ -76,6 +76,8 @@ export async function seedOne(
     const customer = await stripe.customers.create(
       {
         ...profile,
+        // Subscriptions inherit the clock from the customer; creation does not accept test_clock.
+        ...(config.testClockId ? { test_clock: config.testClockId } : {}),
         metadata: {
           ...customerMetadata,
           ...(config.offline ? { isInvoiced: "true" } : {}),

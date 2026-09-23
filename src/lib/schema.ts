@@ -48,6 +48,14 @@ export const profileSchema = z.object({
 });
 export const configSchema = profileSchema
   .extend({
+    testClockId: z
+      .string()
+      .trim()
+      .refine(
+        (value) => !value || /^clock_[A-Za-z0-9]+$/.test(value),
+        "Enter a valid Test Clock ID beginning with clock_, or leave it blank.",
+      )
+      .optional(),
     priceId: z.string().startsWith("price_"),
     couponId: z.string(),
     // Missing mode means an older batch, which used a fixed quantity.

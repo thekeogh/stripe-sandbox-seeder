@@ -50,6 +50,7 @@ test("connection, every form preference, metadata keyboard controls, reload, and
   await page.getByRole("button", { name: "Connect", exact: true }).click();
   await expect(page.getByText("●  Stripe connected")).toBeVisible();
   await page.getByLabel("Number of customers").fill("2");
+  await page.getByLabel("Test Clock ID").fill("clock_example123");
   await expect(
     page.getByRole("button", { name: "Random · 1–999" }),
   ).toHaveAttribute("aria-pressed", "true");
@@ -103,6 +104,9 @@ test("connection, every form preference, metadata keyboard controls, reload, and
     "sk_test_browser_fixture",
   );
   await expect(page.getByLabel("Number of customers")).toHaveValue("2");
+  await expect(page.getByLabel("Test Clock ID")).toHaveValue(
+    "clock_example123",
+  );
   await expect(page.getByLabel("Quantity", { exact: true })).toHaveValue("5");
   await expect(
     page.getByRole("button", { name: "First & last name" }),
@@ -157,6 +161,7 @@ test("connection, every form preference, metadata keyboard controls, reload, and
     daysUntilDue: 45,
     quantity: 5,
     quantityMode: "fixed",
+    testClockId: "clock_example123",
     domain: "whatever.com",
     couponId: "coupon_demo",
     addressOverrides: { line1: "12 Test Street" },
@@ -408,6 +413,7 @@ test("reset confirms, restores defaults, clears pending batches and optionally f
   await page.goto("/");
   const saved = {
     apiKey: "sk_test_reset_fixture",
+    testClockId: "clock_reset123",
     rememberKey: true,
     count: "42",
     nameType: "person",
@@ -455,6 +461,7 @@ test("reset confirms, restores defaults, clears pending batches and optionally f
   await expect(dialog.getByLabel("Do not clear API key")).toBeChecked();
   await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(page.getByLabel("Number of customers")).toHaveValue("42");
+  await expect(page.getByLabel("Test Clock ID")).toHaveValue("clock_reset123");
   expect(
     await page.evaluate(() =>
       sessionStorage.getItem("stripe-seeder-pending-run"),
@@ -467,6 +474,7 @@ test("reset confirms, restores defaults, clears pending batches and optionally f
   await expect(dialog).toBeHidden();
   await expect(page.getByLabel("Secret API key")).toHaveValue(saved.apiKey);
   await expect(page.getByLabel("Number of customers")).toHaveValue("10");
+  await expect(page.getByLabel("Test Clock ID")).toHaveValue("");
   await expect(
     page.getByRole("button", { name: "Company", exact: true }),
   ).toHaveAttribute("aria-pressed", "true");
@@ -499,6 +507,7 @@ test("reset confirms, restores defaults, clears pending batches and optionally f
   expect(storage.unrelated).toBe("keep");
   expect(storage.settings).toMatchObject({
     apiKey: saved.apiKey,
+    testClockId: "",
     productId: "",
     priceId: "",
     couponId: "",
@@ -509,6 +518,7 @@ test("reset confirms, restores defaults, clears pending batches and optionally f
   await page.reload();
   await expect(page.getByText("●  Stripe connected")).toBeVisible();
   await expect(page.getByLabel("Number of customers")).toHaveValue("10");
+  await expect(page.getByLabel("Test Clock ID")).toHaveValue("");
   await page
     .getByRole("button", { name: "Reset Everything", exact: true })
     .click();

@@ -15,6 +15,8 @@ In the app, paste a **sandbox secret API key** into **Stripe connection**, and c
 
 You can alternatively set `STRIPE_SECRET_KEY` in `.env.local` using `.env.example`, then connect with an empty key field. The UI key takes precedence. Live keys are always rejected. The app binds to localhost and is intended for personal local use; it does not include hosted multi-user authentication.
 
+Optionally enter an existing **Test Clock ID** beneath Stripe Connection. The selection is saved locally and cleared by **Reset Everything**, even when keeping the API key. A non-empty ID is sent as `test_clock` when creating each customer; subscriptions inherit the clock through their customer. Payment methods and catalogue calls do not accept this parameter, so it is omitted there. Blank values omit it entirely. A running/paused batch keeps its original clock selection for retries. See [Stripe test clock usage](https://docs.stripe.com/billing/testing/test-clocks/api-advanced-usage).
+
 ## What it creates
 
 - Company names by default, or first and last names, generated using Faker.

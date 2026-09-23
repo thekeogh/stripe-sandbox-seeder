@@ -127,6 +127,7 @@ function Section({
 
 export default function Home() {
   const [apiKey, setApiKey] = useState("");
+  const [testClockId, setTestClockId] = useState("");
   const [rememberKey, setRememberKey] = useState(true);
   const [hydrated, setHydrated] = useState(false);
   const [connectedKey, setConnectedKey] = useState<string | null>(null);
@@ -192,6 +193,7 @@ export default function Home() {
     }
     initialSettings.current = {};
     setApiKey(nextApiKey);
+    setTestClockId("");
     setRememberKey(nextRememberKey);
     if (!keepApiKey) {
       setConnectedKey(null);
@@ -298,6 +300,8 @@ export default function Home() {
       if (typeof saved.rememberKey === "boolean")
         setRememberKey(saved.rememberKey);
       if (typeof saved.apiKey === "string") setApiKey(saved.apiKey);
+      if (typeof saved.testClockId === "string")
+        setTestClockId(saved.testClockId);
       if (saved.preview) setPreview(saved.preview);
       // Restore selections when the connected catalogue has verified them.
       if (saved.apiKey) void loadCatalog(saved.apiKey, saved);
@@ -332,6 +336,7 @@ export default function Home() {
           quantity,
           rememberKey,
           apiKey: rememberKey ? apiKey : "",
+          testClockId,
           productId: catalog
             ? productId
             : initialSettings.current.productId || "",
@@ -360,6 +365,7 @@ export default function Home() {
     quantityMode,
     rememberKey,
     apiKey,
+    testClockId,
     productId,
     priceId,
     couponId,
@@ -556,6 +562,7 @@ export default function Home() {
       return;
     }
     const parsed = configSchema.safeParse({
+      testClockId,
       nameType,
       domain,
       country,
@@ -778,6 +785,16 @@ export default function Home() {
                 settings
               </Typography>
             }
+          />
+          <Divider sx={{ my: 2 }} />
+          <TextField
+            label="Test Clock ID"
+            placeholder="clock_…"
+            value={testClockId}
+            onChange={(e) => setTestClockId(e.target.value)}
+            disabled={running || pending}
+            slotProps={{ inputLabel: { shrink: true } }}
+            helperText="Optional. Customers and their subscriptions will use this clock. Leave blank to seed without a test clock."
           />
         </Paper>
         {catalogError && (

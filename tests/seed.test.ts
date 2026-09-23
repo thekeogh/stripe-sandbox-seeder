@@ -421,3 +421,46 @@ test("generated metadata is resolved per object before writes and invoice flag o
     false,
   );
 });
+
+test("test clocks are passed only to customer creation for card and invoice subscriptions", async () => {
+  for (const offline of [false, true]) {
+    for (const testClockId of [undefined, "", "clock_example123"]) {
+      const { stripe, calls } = mockStripe();
+      const clockConfig = configSchema.parse({
+        ...config,
+        offline,
+        daysUntilDue: offline ? 30 : undefined,
+        testClockId,
+      });
+      await seedOne(stripe, { ...input, config: clockConfig });
+      const customer = calls.find((call) => call.method === "customer")!;
+      if (testClockId) assert.equal(customer.data.test_clock, testClockId);
+      else assert.equal(Object.hasOwn(customer.data, "test_clock"), false);
+      for (const call of calls.filter((call) => call.method !== "customer")) {
+        if (typeof call.data === "object" && call.data !== null)
+          assert.equal(Object.hasOwn(call.data, "test_clock"), false);
+      }
+      assert.equal(
+        calls.find((call) => call.method === "subscription")!.data.customer,
+        "cus_test",
+      );
+    }
+  }
+});
+test("clock IDs are optional, trimmed and validated before Stripe writes", () => {
+  assert.equal(
+    configSchema.parse({ ...config, testClockId: "  clock_example123  " })
+      .testClockId,
+    "clock_example123",
+  );
+  assert.equal(
+    configSchema.parse({ ...config, testClockId: "   " }).testClockId,
+    "",
+  );
+  for (const testClockId of ["clock_", "cus_wrong", "clock_has spaces", 123]) {
+    assert.equal(
+      configSchema.safeParse({ ...config, testClockId }).success,
+      false,
+    );
+  }
+});
