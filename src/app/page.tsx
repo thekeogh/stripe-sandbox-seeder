@@ -31,6 +31,7 @@ import {
 import AutoAwesomeRounded from "@mui/icons-material/AutoAwesomeRounded";
 import BusinessRounded from "@mui/icons-material/BusinessRounded";
 import PersonOutlineRounded from "@mui/icons-material/PersonOutlineRounded";
+import EditRounded from "@mui/icons-material/EditRounded";
 import RefreshRounded from "@mui/icons-material/RefreshRounded";
 import ArrowForwardRounded from "@mui/icons-material/ArrowForwardRounded";
 import DataObjectRounded from "@mui/icons-material/DataObjectRounded";
@@ -38,7 +39,9 @@ import ReceiptLongRounded from "@mui/icons-material/ReceiptLongRounded";
 import ShieldOutlined from "@mui/icons-material/ShieldOutlined";
 import { BatchProgress, type SeedResult } from "@/components/batch-progress";
 import { MetadataEditor } from "@/components/metadata-editor";
+import type { AccountInfo } from "@/lib/account-info";
 import { formatMajorAmount, majorAmountToMinor } from "@/lib/money";
+import { stripeKeyMode } from "@/lib/stripe-key-mode";
 import {
   configSchema,
   countries,
@@ -126,6 +129,58 @@ function Section({
   );
 }
 
+function AccountDetails({ account }: { account: AccountInfo }) {
+  const fields = [
+    ["Account ID", account.id],
+    ["Dashboard name", account.dashboardName],
+    ["Business name", account.businessName],
+    ["Email", account.email],
+    ["Country", account.country],
+    ["Default currency", account.defaultCurrency?.toUpperCase()],
+    ["Business type", account.businessType],
+    ["Account type", account.accountType],
+  ];
+  return (
+    <Box
+      sx={{
+        mt: 2,
+        p: 2,
+        border: "1px solid",
+        borderColor: "divider",
+        borderRadius: 2,
+      }}
+    >
+      <Typography variant="caption" color="text.secondary">
+        CONNECTED STRIPE ACCOUNT
+      </Typography>
+      <Typography
+        variant="h6"
+        sx={{ mt: 0.5, mb: 2, overflowWrap: "anywhere" }}
+      >
+        {account.dashboardName || account.businessName || account.id}
+      </Typography>
+      <Box
+        sx={{
+          display: "grid",
+          gridTemplateColumns: { xs: "1fr", sm: "repeat(2, minmax(0, 1fr))" },
+          gap: 1.5,
+        }}
+      >
+        {fields.map(([label, value]) => (
+          <Box key={label}>
+            <Typography variant="caption" color="text.secondary">
+              {label}
+            </Typography>
+            <Typography variant="body2" sx={{ overflowWrap: "anywhere" }}>
+              {value || "Not provided by Stripe"}
+            </Typography>
+          </Box>
+        ))}
+      </Box>
+    </Box>
+  );
+}
+
 export default function Home() {
   const [apiKey, setApiKey] = useState("");
   const [testClockId, setTestClockId] = useState("");
@@ -135,7 +190,14 @@ export default function Home() {
   const initialSettings = useRef<Record<string, unknown>>({});
   const initialPreviewHandled = useRef(false);
   const [count, setCount] = useState("10");
-  const [nameType, setNameType] = useState<"company" | "person">("company");
+  const [nameType, setNameType] = useState<"company" | "person" | "custom">(
+    "company",
+  );
+  const [customName, setCustomName] = useState("");
+  const [emailMode, setEmailMode] = useState<"generated" | "custom">(
+    "generated",
+  );
+  const [customEmail, setCustomEmail] = useState("");
   const [domain, setDomain] = useState("");
   const [country, setCountry] = useState<Country>("GB");
   const [overrides, setOverrides] = useState<Partial<Address>>({});
@@ -148,6 +210,11 @@ export default function Home() {
   const [subscriptionMetadata, setSubscriptionMetadata] =
     useState<MetadataRow[]>(emptyRows);
   const [catalog, setCatalog] = useState<Catalog | null>(null);
+  const [account, setAccount] = useState<AccountInfo | null>(null);
+  const [accountError, setAccountError] = useState("");
+  const [resolvedMode, setResolvedMode] = useState<"test" | "live" | null>(
+    null,
+  );
   const [catalogError, setCatalogError] = useState("");
   const [catalogLoading, setCatalogLoading] = useState(false);
   const [productId, setProductId] = useState("");
@@ -207,9 +274,15 @@ export default function Home() {
     if (!keepApiKey) {
       setConnectedKey(null);
       setCatalog(null);
+      setAccount(null);
+      setAccountError("");
+      setResolvedMode(null);
     }
     setCount("10");
     setNameType("company");
+    setCustomName("");
+    setEmailMode("generated");
+    setCustomEmail("");
     setDomain("");
     setCountry("GB");
     setOverrides({});
@@ -246,7 +319,30 @@ export default function Home() {
     ) => {
       setCatalogLoading(true);
       setCatalogError("");
+      setAccountError("");
+      let mode = stripeKeyMode(key);
       try {
+        if (mode === "live" || !key.trim()) {
+          const response = await fetch("/api/account", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ apiKey: key }),
+            cache: "no-store",
+          });
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.error);
+          if (data.mode !== "test" && data.mode !== "live")
+            throw new Error("Stripe returned an unknown connection mode.");
+          mode = data.mode;
+          setResolvedMode(data.mode);
+          setAccount(data.account || null);
+          setAccountError(data.accountError || "");
+          if (mode === "live") {
+            setCatalog(null);
+            setConnectedKey(null);
+            return;
+          }
+        }
         const response = await fetch("/api/catalog", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -256,6 +352,9 @@ export default function Home() {
         const data = await response.json();
         if (!response.ok) throw new Error(data.error);
         setCatalog(data);
+        setResolvedMode("test");
+        setAccount(data.account || null);
+        setAccountError(data.accountError || "");
         setConnectedKey(key);
         const chosenProduct = data.products.some(
           (p: { id: string }) => p.id === selections?.productId,
@@ -286,9 +385,11 @@ export default function Home() {
       } catch (e) {
         setCatalog(null);
         setConnectedKey(null);
-        setCatalogError(
-          e instanceof Error ? e.message : "Could not connect to Stripe.",
-        );
+        setAccount(null);
+        const message =
+          e instanceof Error ? e.message : "Could not connect to Stripe.";
+        if (mode === "live") setAccountError(message);
+        else setCatalogError(message);
       } finally {
         setCatalogLoading(false);
       }
@@ -301,8 +402,17 @@ export default function Home() {
       const saved = raw ? JSON.parse(raw) : {};
       initialSettings.current = saved;
       if (typeof saved.count === "string") setCount(saved.count);
-      if (saved.nameType === "person" || saved.nameType === "company")
+      if (
+        saved.nameType === "person" ||
+        saved.nameType === "company" ||
+        saved.nameType === "custom"
+      )
         setNameType(saved.nameType);
+      if (typeof saved.customName === "string") setCustomName(saved.customName);
+      if (saved.emailMode === "generated" || saved.emailMode === "custom")
+        setEmailMode(saved.emailMode);
+      if (typeof saved.customEmail === "string")
+        setCustomEmail(saved.customEmail);
       if (typeof saved.domain === "string") setDomain(saved.domain);
       if (saved.country in countries) setCountry(saved.country);
       if (saved.overrides && typeof saved.overrides === "object")
@@ -354,6 +464,9 @@ export default function Home() {
         JSON.stringify({
           count,
           nameType,
+          customName,
+          emailMode,
+          customEmail,
           domain,
           country,
           overrides,
@@ -387,6 +500,9 @@ export default function Home() {
     hydrated,
     count,
     nameType,
+    customName,
+    emailMode,
+    customEmail,
     domain,
     country,
     overrides,
@@ -447,7 +563,10 @@ export default function Home() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             nameType,
-            domain,
+            customName,
+            emailMode,
+            customEmail,
+            domain: emailMode === "custom" ? "" : domain,
             country,
             addressOverrides: {},
           }),
@@ -471,7 +590,7 @@ export default function Home() {
       clearTimeout(timeout);
       controller.abort();
     };
-  }, [hydrated, nameType, domain, country, previewTick]);
+  }, [hydrated, nameType, emailMode, domain, country, previewTick]);
   useEffect(() => {
     if (!pending && !running) return;
     const warn = (e: BeforeUnloadEvent) => {
@@ -620,7 +739,10 @@ export default function Home() {
     const parsed = configSchema.safeParse({
       testClockId,
       nameType,
-      domain,
+      customName,
+      emailMode,
+      customEmail,
+      domain: emailMode === "custom" ? "" : domain,
       country,
       addressOverrides: overrides,
       customerMetadata,
@@ -665,6 +787,10 @@ export default function Home() {
   const selectedPrice = catalog?.prices.find((p) => p.id === priceId);
   const isCustomPrice = priceId === "custom";
   const selectedProduct = catalog?.products.find((p) => p.id === productId);
+  const connectionMode =
+    stripeKeyMode(apiKey) === "unknown"
+      ? resolvedMode || (catalog ? "test" : "unknown")
+      : stripeKeyMode(apiKey);
   const coupons =
     catalog?.coupons.filter(
       (c) =>
@@ -719,11 +845,19 @@ export default function Home() {
             <Chip
               size="small"
               icon={<ShieldOutlined sx={{ fontSize: "16px !important" }} />}
-              label="Sandbox only"
+              label={
+                connectionMode === "live"
+                  ? "LIVE KEY · BLOCKED"
+                  : connectionMode === "test"
+                    ? "TEST MODE"
+                    : "Sandbox only"
+              }
               sx={{
-                bgcolor: "#222b27",
-                color: "#8edcba",
-                "& .MuiChip-icon": { color: "#8edcba" },
+                bgcolor: connectionMode === "live" ? "#5a1c22" : "#222b27",
+                color: connectionMode === "live" ? "#ffb4b4" : "#8edcba",
+                "& .MuiChip-icon": {
+                  color: connectionMode === "live" ? "#ffb4b4" : "#8edcba",
+                },
               }}
             />
           </Stack>
@@ -734,6 +868,26 @@ export default function Home() {
         maxWidth={false}
         sx={{ ...pageWidth, pt: { xs: 4, md: 5.5 }, pb: 6 }}
       >
+        {connectionMode === "live" && (
+          <Alert
+            severity="error"
+            variant="filled"
+            sx={{
+              mb: 3,
+              py: 1.5,
+              border: "2px solid #ff5555",
+              "& .MuiAlert-message": { width: "100%" },
+            }}
+          >
+            <Typography variant="h6" sx={{ fontWeight: 800 }}>
+              LIVE STRIPE KEY DETECTED
+            </Typography>
+            <Typography variant="body2">
+              This key belongs to live mode. Seeding is blocked. Connect only to
+              view account details.
+            </Typography>
+          </Alert>
+        )}
         <Stack
           direction={{ xs: "column", sm: "row" }}
           sx={{
@@ -785,15 +939,44 @@ export default function Home() {
               label={
                 catalogLoading
                   ? "Connecting…"
-                  : catalog
-                    ? "●  Stripe connected"
-                    : "○  Not connected"
+                  : connectionMode === "live" && account
+                    ? "LIVE ACCOUNT · READ ONLY"
+                    : catalog
+                      ? "●  Stripe connected"
+                      : "○  Not connected"
               }
-              color={catalog ? "success" : "default"}
+              color={
+                connectionMode === "live"
+                  ? "error"
+                  : catalog
+                    ? "success"
+                    : "default"
+              }
             />
           </Stack>
         </Stack>
-        <Paper variant="outlined" sx={{ p: 3, mb: 3 }}>
+        <Paper
+          variant="outlined"
+          sx={{
+            p: 3,
+            mb: 3,
+            ...(connectionMode === "test"
+              ? {
+                  background:
+                    "linear-gradient(135deg, #164a31 0%, #19392d 48%, #202725 100%)",
+                  borderColor: "#438d65",
+                  borderWidth: 2,
+                }
+              : connectionMode === "live"
+                ? {
+                    background:
+                      "linear-gradient(135deg, #67232c 0%, #492129 48%, #2b1e22 100%)",
+                    borderColor: "#e36570",
+                    borderWidth: 2,
+                  }
+                : {}),
+          }}
+        >
           <Stack
             direction={{ xs: "column", sm: "row" }}
             sx={{ gap: 3, alignItems: { sm: "center" } }}
@@ -801,7 +984,9 @@ export default function Home() {
             <Box sx={{ minWidth: 170 }}>
               <Typography variant="h6">Stripe connection</Typography>
               <Typography variant="body2" color="text.secondary">
-                Your sandbox API key
+                {connectionMode === "live"
+                  ? "Live key · read-only account lookup"
+                  : "Your sandbox API key"}
               </Typography>
             </Box>
             <TextField
@@ -815,8 +1000,11 @@ export default function Home() {
                 setApiKey(e.target.value.trim());
                 setCatalog(null);
                 setConnectedKey(null);
+                setAccount(null);
+                setAccountError("");
+                setResolvedMode(null);
               }}
-              helperText="Sent only to this app’s server and Stripe. Live keys are rejected."
+              helperText="Sent only to this app’s server and Stripe. Live keys can view account details, but cannot seed."
               slotProps={{ inputLabel: { shrink: true } }}
             />
             <Button
@@ -838,7 +1026,9 @@ export default function Home() {
                 ? "Connecting…"
                 : catalog
                   ? "Reconnect"
-                  : "Connect"}
+                  : account && connectionMode === "live"
+                    ? "Refresh account"
+                    : "Connect"}
             </Button>
           </Stack>
           <FormControlLabel
@@ -856,6 +1046,17 @@ export default function Home() {
               </Typography>
             }
           />
+          {connectionMode === "test" && (
+            <Alert severity="success" sx={{ mt: 1.5 }}>
+              <strong>TEST MODE</strong> · This key is for Stripe test data.
+            </Alert>
+          )}
+          {account && <AccountDetails account={account} />}
+          {accountError && (
+            <Alert severity="warning" sx={{ mt: 2 }}>
+              Account details unavailable: {accountError}
+            </Alert>
+          )}
           <Divider sx={{ my: 2 }} />
           <TextField
             label="Test Clock ID"
@@ -909,7 +1110,7 @@ export default function Home() {
                     variant="body2"
                     sx={{ fontWeight: 600, mb: 1.25 }}
                   >
-                    Generate names as
+                    Customer name
                   </Typography>
                   <ToggleButtonGroup
                     value={nameType}
@@ -936,22 +1137,85 @@ export default function Home() {
                       <PersonOutlineRounded sx={{ mr: 1, fontSize: 19 }} />
                       First & last name
                     </ToggleButton>
+                    <ToggleButton value="custom">
+                      <EditRounded sx={{ mr: 1, fontSize: 19 }} />
+                      Custom
+                    </ToggleButton>
                   </ToggleButtonGroup>
                 </Box>
-                <TextField
-                  label="Email domain"
-                  placeholder="Automatic — based on each customer"
-                  value={domain}
-                  onChange={(e) => setDomain(e.target.value)}
-                  helperText={
-                    domain
-                      ? "This domain will be used for every customer. A leading @ is optional."
-                      : nameType === "company"
-                        ? "A random username @ a domain based on the generated company."
-                        : "First and last name @ a randomly generated domain."
-                  }
-                  slotProps={{ inputLabel: { shrink: true } }}
-                />
+                {nameType === "custom" && (
+                  <TextField
+                    label="Custom customer name"
+                    value={customName}
+                    onChange={(e) => setCustomName(e.target.value)}
+                    helperText="Used for every customer in this batch."
+                    slotProps={{
+                      inputLabel: { shrink: true },
+                      htmlInput: { maxLength: 255 },
+                    }}
+                  />
+                )}
+                <Box>
+                  <Typography
+                    variant="body2"
+                    sx={{ fontWeight: 600, mb: 1.25 }}
+                  >
+                    Email address
+                  </Typography>
+                  <ToggleButtonGroup
+                    value={emailMode}
+                    exclusive
+                    fullWidth
+                    onChange={(_, value) => value && setEmailMode(value)}
+                    sx={{
+                      "& .MuiToggleButton-root": {
+                        py: 1.3,
+                        textTransform: "none",
+                      },
+                      "& .Mui-selected": {
+                        bgcolor: "#302b46 !important",
+                        color: "#c4bcff !important",
+                        borderColor: "#6a6098 !important",
+                      },
+                    }}
+                  >
+                    <ToggleButton value="generated">
+                      Generated email
+                    </ToggleButton>
+                    <ToggleButton value="custom">Custom email</ToggleButton>
+                  </ToggleButtonGroup>
+                </Box>
+                {emailMode === "generated" ? (
+                  <TextField
+                    label="Email domain"
+                    placeholder="Automatic — based on each customer"
+                    value={domain}
+                    onChange={(e) => setDomain(e.target.value)}
+                    helperText={
+                      domain
+                        ? "A unique generated address for each customer using this domain. A leading @ is optional."
+                        : nameType === "company"
+                          ? "A random username @ a domain based on the generated company."
+                          : nameType === "person"
+                            ? "First and last name @ a randomly generated domain."
+                            : "A random username @ a randomly generated domain."
+                    }
+                    slotProps={{ inputLabel: { shrink: true } }}
+                  />
+                ) : (
+                  <TextField
+                    label="Custom email address"
+                    type="email"
+                    placeholder="person@example.com"
+                    value={customEmail}
+                    onChange={(e) => setCustomEmail(e.target.value)}
+                    helperText="This exact email address will be used for every customer in the batch."
+                    slotProps={{
+                      inputLabel: { shrink: true },
+                      htmlInput: { maxLength: 254 },
+                    }}
+                  />
+                )}
                 <Divider />
                 <MetadataEditor
                   label="Customer"
@@ -1549,6 +1813,8 @@ export default function Home() {
                   >
                     {nameType === "company" ? (
                       <BusinessRounded color="primary" />
+                    ) : nameType === "custom" ? (
+                      <EditRounded color="primary" />
                     ) : (
                       <PersonOutlineRounded color="primary" />
                     )}
@@ -1556,14 +1822,18 @@ export default function Home() {
                   <Typography
                     sx={{ fontWeight: 600, ...{ overflowWrap: "anywhere" } }}
                   >
-                    {preview.name}
+                    {nameType === "custom"
+                      ? customName.trim() || "Your custom name"
+                      : preview.name}
                   </Typography>
                   <Typography
                     variant="body2"
                     color="text.secondary"
                     sx={{ overflowWrap: "anywhere" }}
                   >
-                    {preview.email}
+                    {emailMode === "custom"
+                      ? customEmail.trim() || "you@example.com"
+                      : preview.email}
                   </Typography>
                   <Typography
                     variant="body2"

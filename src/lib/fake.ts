@@ -76,7 +76,9 @@ export function fakeCustomer(config: ProfileConfig, seed: string) {
   const name =
     config.nameType === "company"
       ? faker.company.name()
-      : `${firstName} ${lastName}`;
+      : config.nameType === "person"
+        ? `${firstName} ${lastName}`
+        : config.customName?.trim() || "Your custom name";
   const domain =
     config.domain ||
     (config.nameType === "company"
@@ -91,7 +93,10 @@ export function fakeCustomer(config: ProfileConfig, seed: string) {
           .replace(/[^a-z0-9._-]/g, "");
   return {
     name,
-    email: `${(local || faker.string.alpha({ length: 10, casing: "lower" })).slice(0, 64)}@${domain}`,
+    email:
+      config.emailMode === "custom"
+        ? config.customEmail?.trim() || "you@example.com"
+        : `${(local || faker.string.alpha({ length: 10, casing: "lower" })).slice(0, 64)}@${domain}`,
     address: {
       line1: faker.location.streetAddress(),
       line2: faker.datatype.boolean({ probability: 0.3 })

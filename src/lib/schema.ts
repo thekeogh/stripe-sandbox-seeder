@@ -30,7 +30,10 @@ export const addressSchema = z.object({
 });
 export type Address = z.infer<typeof addressSchema>;
 export const profileSchema = z.object({
-  nameType: z.enum(["company", "person"]),
+  nameType: z.enum(["company", "person", "custom"]),
+  customName: z.string().trim().max(255).optional(),
+  emailMode: z.enum(["generated", "custom"]).optional(),
+  customEmail: z.string().trim().max(254).optional(),
   domain: z
     .string()
     .trim()
@@ -89,6 +92,18 @@ export const configSchema = profileSchema
     daysUntilDue: z.number().int().min(0).max(730).optional(),
   })
   .superRefine((v, ctx) => {
+    if (v.nameType === "custom" && !v.customName)
+      ctx.addIssue({
+        code: "custom",
+        path: ["customName"],
+        message: "Enter a custom customer name.",
+      });
+    if (v.emailMode === "custom" && !z.email().safeParse(v.customEmail).success)
+      ctx.addIssue({
+        code: "custom",
+        path: ["customEmail"],
+        message: "Enter a valid custom email address.",
+      });
     if (
       Boolean(v.priceId) === Boolean(v.priceData) ||
       (v.priceId && !v.priceId.startsWith("price_"))
@@ -127,6 +142,8 @@ export const seedSchema = z.object({
 export type SeedConfig = z.infer<typeof configSchema>;
 export type ProfileConfig = z.infer<typeof profileSchema>;
 export type Catalog = {
+  account?: import("./account-info").AccountInfo | null;
+  accountError?: string;
   products: { id: string; name: string }[];
   prices: {
     id: string;

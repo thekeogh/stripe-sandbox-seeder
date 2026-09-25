@@ -12,6 +12,8 @@ import {
 import { seedOne, SeedError } from "../src/lib/seed";
 import { formatMajorAmount, majorAmountToMinor } from "../src/lib/money";
 import { getStripe, errorMessage, sameOrigin } from "../src/lib/stripe";
+import { stripeKeyMode } from "../src/lib/stripe-key-mode";
+import { accountInfo } from "../src/lib/account-info";
 
 const config: SeedConfig = {
   nameType: "company",
@@ -215,6 +217,60 @@ test("domain overrides normalize @; person email matches their generated name", 
     false,
   );
 });
+test("custom customer names repeat across a batch while Faker emails stay distinct", () => {
+  const custom = configSchema.parse({
+    ...config,
+    nameType: "custom",
+    customName: "  Acme Billing Ltd  ",
+  });
+  const first = fakeCustomer(custom, "custom-1");
+  const second = fakeCustomer(custom, "custom-2");
+  assert.equal(first.name, "Acme Billing Ltd");
+  assert.equal(second.name, first.name);
+  assert.notEqual(first.email, second.email);
+  assert.equal(
+    configSchema.safeParse({ ...config, nameType: "custom" }).success,
+    false,
+  );
+  assert.equal(
+    configSchema.safeParse({ ...config, nameType: "custom", customName: "   " })
+      .success,
+    false,
+  );
+});
+test("custom email overrides generated addresses for every customer", () => {
+  const custom = configSchema.parse({
+    ...config,
+    emailMode: "custom",
+    customEmail: "  accounts@example.com  ",
+  });
+  assert.equal(fakeCustomer(custom, "email-1").email, "accounts@example.com");
+  assert.equal(fakeCustomer(custom, "email-2").email, "accounts@example.com");
+  assert.equal(
+    configSchema.safeParse({ ...config, emailMode: "custom" }).success,
+    false,
+  );
+  assert.equal(
+    configSchema.safeParse({
+      ...config,
+      emailMode: "custom",
+      customEmail: "not-an-email",
+    }).success,
+    false,
+  );
+  assert.equal(
+    configSchema.safeParse({
+      ...config,
+      emailMode: "custom",
+      customEmail: "accounts@example.com",
+    }).success,
+    true,
+  );
+  assert.notEqual(
+    fakeCustomer(config, "email-1").email,
+    fakeCustomer(config, "email-2").email,
+  );
+});
 test("metadata, invoice terms and request identifiers are validated", () => {
   assert.equal(
     configSchema.safeParse({ ...config, offline: true }).success,
@@ -258,10 +314,37 @@ test("metadata, invoice terms and request identifiers are validated", () => {
 });
 test("live credentials are refused and secrets are redacted", () => {
   assert.throws(() => getStripe("sk_live_DO_NOT_USE"), /Live keys are blocked/);
+  assert.equal(stripeKeyMode("sk_test_abc"), "test");
+  assert.equal(stripeKeyMode("rk_test_abc"), "test");
+  assert.equal(stripeKeyMode("sk_live_abc"), "live");
+  assert.equal(stripeKeyMode("invalid"), "unknown");
   assert.equal(
     errorMessage(new Error("Invalid key sk_test_secret123")),
     "Invalid key [redacted]",
   );
+});
+
+test("account details use Stripe dashboard and business names without exposing the key", () => {
+  const details = accountInfo({
+    id: "acct_test",
+    settings: { dashboard: { display_name: "Sandbox one" } },
+    business_profile: { name: "Example Ltd" },
+    email: "billing@example.com",
+    country: "GB",
+    default_currency: "gbp",
+    business_type: "company",
+    type: "standard",
+  } as Stripe.Account);
+  assert.deepEqual(details, {
+    id: "acct_test",
+    dashboardName: "Sandbox one",
+    businessName: "Example Ltd",
+    email: "billing@example.com",
+    country: "GB",
+    defaultCurrency: "gbp",
+    businessType: "company",
+    accountType: "standard",
+  });
 });
 
 test("origin checks allow Next internal hostname differences and reject foreign origins", () => {

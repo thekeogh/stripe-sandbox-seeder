@@ -1,5 +1,6 @@
 import { getStripe, errorMessage, sameOrigin } from "@/lib/stripe";
 import type { Catalog } from "@/lib/schema";
+import { accountInfo } from "@/lib/account-info";
 export const dynamic = "force-dynamic";
 export async function POST(request: Request) {
   try {
@@ -10,6 +11,17 @@ export async function POST(request: Request) {
     const stripe = getStripe(body.apiKey);
     const catalog: Catalog = { products: [], prices: [], coupons: [] };
     await Promise.all([
+      (async () => {
+        try {
+          catalog.account = accountInfo(
+            await stripe.accounts.retrieveCurrent(),
+          );
+        } catch {
+          catalog.account = null;
+          catalog.accountError =
+            "Stripe did not provide account details for this key.";
+        }
+      })(),
       (async () => {
         for await (const p of stripe.products.list({
           active: true,

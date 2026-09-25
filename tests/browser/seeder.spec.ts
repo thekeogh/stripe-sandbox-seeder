@@ -1,5 +1,15 @@
 import { expect, test } from "@playwright/test";
 const catalog = {
+  account: {
+    id: "acct_test_browser",
+    dashboardName: "Seeder sandbox",
+    businessName: "Example Ltd",
+    email: "billing@example.com",
+    country: "GB",
+    defaultCurrency: "gbp",
+    businessType: "company",
+    accountType: "standard",
+  },
   products: [{ id: "prod_demo", name: "Starter" }],
   prices: [
     {
@@ -19,6 +29,154 @@ const catalog = {
     },
   ],
 };
+
+test("custom email persists, previews, and replaces generated addresses in a batch", async ({
+  page,
+}) => {
+  const payloads: any[] = [];
+  await page.route("**/api/catalog", (route) =>
+    route.fulfill({ json: catalog }),
+  );
+  await page.route("**/api/seed", (route) => {
+    const body = route.request().postDataJSON();
+    payloads.push(body);
+    return route.fulfill({
+      json: {
+        customerId: `cus_email_${body.index}`,
+        subscriptionId: `sub_email_${body.index}`,
+        name: `Customer ${body.index}`,
+        email: "accounts@example.com",
+        status: "active",
+      },
+    });
+  });
+  await page.goto("/");
+  await page.getByLabel("Secret API key").fill("sk_test_custom_email_fixture");
+  await page.getByRole("button", { name: "Connect", exact: true }).click();
+  await page.getByRole("combobox", { name: "Product", exact: true }).click();
+  await page.getByRole("option", { name: "Starter", exact: true }).click();
+  await page.getByLabel("Email domain").fill("@saved.example.com");
+  await page.getByRole("button", { name: "Custom email", exact: true }).click();
+  await expect(page.getByLabel("Email domain")).toHaveCount(0);
+  await page.getByLabel("Number of customers").fill("2");
+  await page
+    .getByRole("button", { name: "Seed customers", exact: true })
+    .click();
+  await expect(
+    page.getByText("Enter a valid custom email address."),
+  ).toBeVisible();
+  await page.getByLabel("Custom email address").fill("accounts@example.com");
+  await expect(
+    page.getByText("accounts@example.com", { exact: true }),
+  ).toBeVisible();
+  await page.reload();
+  await expect(
+    page.getByRole("button", { name: "Custom email", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByLabel("Custom email address")).toHaveValue(
+    "accounts@example.com",
+  );
+  await page
+    .getByRole("button", { name: "Generated email", exact: true })
+    .click();
+  await expect(page.getByLabel("Email domain")).toHaveValue(
+    "@saved.example.com",
+  );
+  await page.getByRole("button", { name: "Custom email", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Seed customers", exact: true })
+    .click();
+  await expect(page.getByText("Your sandbox is ready")).toBeVisible();
+  expect(payloads).toHaveLength(2);
+  for (const payload of payloads)
+    expect(payload.config).toMatchObject({
+      emailMode: "custom",
+      customEmail: "accounts@example.com",
+      domain: "",
+    });
+});
+
+test("custom customer name persists and is used for each customer in the batch", async ({
+  page,
+}) => {
+  const payloads: any[] = [];
+  await page.route("**/api/catalog", (route) =>
+    route.fulfill({ json: catalog }),
+  );
+  await page.route("**/api/seed", (route) => {
+    const body = route.request().postDataJSON();
+    payloads.push(body);
+    return route.fulfill({
+      json: {
+        customerId: `cus_${body.index}`,
+        subscriptionId: `sub_${body.index}`,
+        name: "Acme Billing Ltd",
+        email: `person${body.index}@example.com`,
+        status: "active",
+      },
+    });
+  });
+  await page.goto("/");
+  await page.getByLabel("Secret API key").fill("sk_test_custom_name_fixture");
+  await page.getByRole("button", { name: "Connect", exact: true }).click();
+  await page.getByRole("button", { name: "Custom", exact: true }).click();
+  await page.getByLabel("Custom customer name").fill("Acme Billing Ltd");
+  await expect(
+    page.getByText("Acme Billing Ltd", { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("combobox", { name: "Product", exact: true }).click();
+  await page.getByRole("option", { name: "Starter", exact: true }).click();
+  await page.getByLabel("Number of customers").fill("2");
+  await page.reload();
+  await expect(
+    page.getByRole("button", { name: "Custom", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByLabel("Custom customer name")).toHaveValue(
+    "Acme Billing Ltd",
+  );
+  await page
+    .getByRole("button", { name: "Seed customers", exact: true })
+    .click();
+  await expect(page.getByText("Your sandbox is ready")).toBeVisible();
+  expect(payloads).toHaveLength(2);
+  for (const payload of payloads)
+    expect(payload.config).toMatchObject({
+      nameType: "custom",
+      customName: "Acme Billing Ltd",
+    });
+});
+
+test("a blank key backed by a live environment key is shown as live and cannot seed", async ({
+  page,
+}) => {
+  let catalogCalls = 0;
+  await page.route("**/api/account", (route) =>
+    route.fulfill({
+      json: {
+        mode: "live",
+        account: {
+          ...catalog.account,
+          id: "acct_env_live",
+          dashboardName: "Environment production",
+        },
+      },
+    }),
+  );
+  await page.route("**/api/catalog", (route) => {
+    catalogCalls++;
+    return route.fulfill({ json: catalog });
+  });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Connect", exact: true }).click();
+  await expect(page.getByText("LIVE STRIPE KEY DETECTED")).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Environment production" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Seed customers", exact: true }),
+  ).toBeDisabled();
+  expect(catalogCalls).toBe(0);
+});
 
 test("custom recurring price for a product without prices formats, persists and submits price_data", async ({
   page,
@@ -44,6 +202,10 @@ test("custom recurring price for a product without prices formats, persists and 
   await page.getByLabel("Secret API key").fill("sk_test_custom_price_fixture");
   await page.getByRole("button", { name: "Connect", exact: true }).click();
   await expect(page.getByText("●  Stripe connected")).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Seeder sandbox" }),
+  ).toBeVisible();
+  await expect(page.getByText("acct_test_browser")).toBeVisible();
   await page.getByRole("combobox", { name: "Product", exact: true }).click();
   await page.getByRole("option", { name: "Starter", exact: true }).click();
   await expect(
@@ -265,20 +427,45 @@ test("connection, every form preference, metadata keyboard controls, reload, and
   });
 });
 
-test("live keys are rejected, automatic batch validates count, interrupted request resumes safely, key can be forgotten", async ({
+test("live keys show read-only account details, automatic batch validates count, interrupted request resumes safely, key can be forgotten", async ({
   page,
 }) => {
+  let liveCatalogCalls = 0;
+  await page.route("**/api/catalog", (route) => {
+    liveCatalogCalls++;
+    return route.fulfill({ json: catalog });
+  });
+  await page.route("**/api/account", (route) =>
+    route.fulfill({
+      json: {
+        mode: "live",
+        account: {
+          ...catalog.account,
+          id: "acct_live_browser",
+          dashboardName: "Production billing",
+        },
+      },
+    }),
+  );
   await page.goto("/");
   await page.getByLabel("Secret API key").fill("sk_live_fixture");
+  await expect(page.getByText("LIVE STRIPE KEY DETECTED")).toBeVisible();
+  await expect(page.getByText("LIVE KEY · BLOCKED")).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Seed customers", exact: true }),
+  ).toBeDisabled();
   await page.getByRole("button", { name: "Connect", exact: true }).click();
   await expect(
-    page.getByRole("alert").filter({
-      hasText: "Only Stripe test / sandbox secret keys are allowed.",
-    }),
+    page.getByRole("heading", { name: "Production billing" }),
   ).toBeVisible();
-  await page.route("**/api/catalog", (route) =>
-    route.fulfill({ json: catalog }),
-  );
+  await expect(page.getByText("acct_live_browser")).toBeVisible();
+  await expect(page.getByText("LIVE ACCOUNT · READ ONLY")).toBeVisible();
+  expect(liveCatalogCalls).toBe(0);
+  await page.reload();
+  await expect(
+    page.getByRole("heading", { name: "Production billing" }),
+  ).toBeVisible();
+  await expect(page.getByText("LIVE STRIPE KEY DETECTED")).toBeVisible();
   await page.getByLabel("Secret API key").fill("sk_test_browser_fixture");
   await page.getByRole("button", { name: "Connect", exact: true }).click();
   await page.getByRole("combobox", { name: "Product", exact: true }).click();
@@ -492,6 +679,9 @@ test("reset confirms, restores defaults, clears pending batches and optionally f
     rememberKey: true,
     count: "42",
     nameType: "person",
+    customName: "Saved but inactive",
+    emailMode: "custom",
+    customEmail: "saved@example.com",
     domain: "reset.example.com",
     country: "US",
     overrides: { line1: "Keep until confirmed" },
@@ -539,6 +729,9 @@ test("reset confirms, restores defaults, clears pending batches and optionally f
   await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(page.getByLabel("Number of customers")).toHaveValue("42");
   await expect(page.getByLabel("Test Clock ID")).toHaveValue("clock_reset123");
+  await expect(page.getByLabel("Custom email address")).toHaveValue(
+    "saved@example.com",
+  );
   await expect(page.getByLabel("Free trial (days)")).toHaveValue("60");
   expect(
     await page.evaluate(() =>
@@ -594,6 +787,9 @@ test("reset confirms, restores defaults, clears pending batches and optionally f
     netD: "30",
     trialDays: "",
     quantity: "1",
+    customName: "",
+    emailMode: "generated",
+    customEmail: "",
   });
   await page.reload();
   await expect(page.getByText("●  Stripe connected")).toBeVisible();
