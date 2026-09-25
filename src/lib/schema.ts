@@ -56,7 +56,17 @@ export const configSchema = profileSchema
         "Enter a valid Test Clock ID beginning with clock_, or leave it blank.",
       )
       .optional(),
-    priceId: z.string().startsWith("price_"),
+    priceId: z.string(),
+    priceData: z
+      .object({
+        currency: z.enum(["usd", "gbp", "eur", "cad"]),
+        product: z.string().startsWith("prod_"),
+        recurring: z.object({
+          interval: z.enum(["day", "week", "month", "year"]),
+        }),
+        unit_amount: z.number().int().positive().refine(Number.isSafeInteger),
+      })
+      .optional(),
     couponId: z.string(),
     trialDays: z
       .number()
@@ -79,6 +89,14 @@ export const configSchema = profileSchema
     daysUntilDue: z.number().int().min(0).max(730).optional(),
   })
   .superRefine((v, ctx) => {
+    if (
+      Boolean(v.priceId) === Boolean(v.priceData) ||
+      (v.priceId && !v.priceId.startsWith("price_"))
+    )
+      ctx.addIssue({
+        code: "custom",
+        message: "Choose a recurring price or enter a custom price.",
+      });
     if (
       !v.metadataReferenceDate &&
       [...v.customerMetadata, ...v.subscriptionMetadata].some(

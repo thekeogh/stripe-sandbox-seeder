@@ -22,19 +22,21 @@ export async function seedOne(
   const { config, runId, index } = input;
   const key = `sandbox-seeder:${runId}:${index}`;
   const options = (step: string) => ({ idempotencyKey: `${key}:${step}` });
-  const price = await stripe.prices.retrieve(config.priceId, {
-    expand: ["product"],
-  });
-  const product = price.product as Stripe.Product;
+  const price = config.priceId
+    ? await stripe.prices.retrieve(config.priceId, { expand: ["product"] })
+    : null;
+  const product = price
+    ? (price.product as Stripe.Product)
+    : await stripe.products.retrieve(config.priceData!.product);
   if (
-    price.livemode ||
-    !price.active ||
-    !price.recurring ||
+    price?.livemode ||
+    (price && (!price.active || !price.recurring)) ||
+    product.livemode ||
     product.deleted ||
     !product.active
   )
     throw new SeedError(
-      "Choose an active recurring price from an active sandbox product.",
+      "Choose an active recurring price or an active sandbox product for a custom price.",
       false,
     );
   if (config.couponId) {
@@ -49,7 +51,10 @@ export async function seedOne(
         "This coupon does not apply to the selected product.",
         false,
       );
-    if (coupon.currency && coupon.currency !== price.currency)
+    if (
+      coupon.currency &&
+      coupon.currency !== (price?.currency || config.priceData!.currency)
+    )
       throw new SeedError("Coupon and price currencies must match.", false);
   }
   const profile = fakeCustomer(config, key);
@@ -93,7 +98,7 @@ export async function seedOne(
     );
     customerId = customer.id;
     const quantity =
-      price.recurring.usage_type === "metered"
+      price?.recurring?.usage_type === "metered"
         ? null
         : config.quantityMode === "random"
           ? fakeQuantity(key)
@@ -103,7 +108,9 @@ export async function seedOne(
         customer: customer.id,
         items: [
           {
-            price: price.id,
+            ...(price
+              ? { price: price.id }
+              : { price_data: config.priceData! }),
             ...(quantity === null ? {} : { quantity }),
           },
         ],

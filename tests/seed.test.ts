@@ -10,6 +10,7 @@ import {
   type SeedConfig,
 } from "../src/lib/schema";
 import { seedOne, SeedError } from "../src/lib/seed";
+import { formatMajorAmount, majorAmountToMinor } from "../src/lib/money";
 import { getStripe, errorMessage, sameOrigin } from "../src/lib/stripe";
 
 const config: SeedConfig = {
@@ -50,6 +51,13 @@ function mockStripe(
         currency: "gbp",
         recurring: { usage_type: usageType },
         product: { id: "prod_test", active: true },
+      }),
+    },
+    products: {
+      retrieve: record("product", {
+        id: "prod_test",
+        active: true,
+        livemode: false,
       }),
     },
     coupons: {
@@ -516,4 +524,80 @@ test("trial days are optional positive whole numbers", () => {
       false,
     );
   }
+});
+
+test("custom price creates inline price_data for card and invoice subscriptions", async () => {
+  for (const offline of [false, true]) {
+    const { stripe, calls } = mockStripe();
+    const customConfig = configSchema.parse({
+      ...config,
+      priceId: "",
+      priceData: {
+        product: "prod_test",
+        currency: "gbp",
+        recurring: { interval: "year" },
+        unit_amount: 100050,
+      },
+      offline,
+      daysUntilDue: offline ? 30 : undefined,
+    });
+    await seedOne(stripe, { ...input, config: customConfig });
+    const sub = calls.find((c) => c.method === "subscription")!.data;
+    assert.deepEqual(sub.items, [
+      {
+        price_data: customConfig.priceData,
+        quantity: 1,
+      },
+    ]);
+    assert.equal(
+      calls.some((c) => c.method === "price"),
+      false,
+    );
+    assert(
+      calls.findIndex((c) => c.method === "product") <
+        calls.findIndex((c) => c.method === "customer"),
+    );
+    if (!offline)
+      assert(
+        calls.findIndex((c) => c.method === "payment") <
+          calls.findIndex((c) => c.method === "subscription"),
+      );
+  }
+});
+
+test("custom price requires one valid source and major amounts convert without floating-point rounding", () => {
+  const data = {
+    product: "prod_test",
+    currency: "usd",
+    recurring: { interval: "month" },
+    unit_amount: 100050,
+  };
+  assert.equal(
+    configSchema.safeParse({ ...config, priceId: "", priceData: data }).success,
+    true,
+  );
+  assert.equal(
+    configSchema.safeParse({ ...config, priceData: data }).success,
+    false,
+  );
+  assert.equal(
+    configSchema.safeParse({ ...config, priceId: "" }).success,
+    false,
+  );
+  for (const invalid of ["jpy", "", "USD"])
+    assert.equal(
+      configSchema.safeParse({
+        ...config,
+        priceId: "",
+        priceData: { ...data, currency: invalid },
+      }).success,
+      false,
+    );
+  assert.equal(formatMajorAmount("1000000000"), "1,000,000,000");
+  assert.equal(formatMajorAmount("12345.67"), "12,345.67");
+  assert.equal(formatMajorAmount("123.456"), null);
+  assert.equal(majorAmountToMinor("1,000.50"), 100050);
+  assert.equal(majorAmountToMinor("0.01"), 1);
+  assert.equal(majorAmountToMinor("0"), null);
+  assert.equal(majorAmountToMinor("100000000000000"), null);
 });

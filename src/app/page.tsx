@@ -38,6 +38,7 @@ import ReceiptLongRounded from "@mui/icons-material/ReceiptLongRounded";
 import ShieldOutlined from "@mui/icons-material/ShieldOutlined";
 import { BatchProgress, type SeedResult } from "@/components/batch-progress";
 import { MetadataEditor } from "@/components/metadata-editor";
+import { formatMajorAmount, majorAmountToMinor } from "@/lib/money";
 import {
   configSchema,
   countries,
@@ -151,6 +152,13 @@ export default function Home() {
   const [catalogLoading, setCatalogLoading] = useState(false);
   const [productId, setProductId] = useState("");
   const [priceId, setPriceId] = useState("");
+  const [customCurrency, setCustomCurrency] = useState<
+    "usd" | "gbp" | "eur" | "cad"
+  >("gbp");
+  const [customInterval, setCustomInterval] = useState<
+    "day" | "week" | "month" | "year"
+  >("year");
+  const [customAmount, setCustomAmount] = useState("");
   const [couponId, setCouponId] = useState("");
   const [offline, setOffline] = useState(false);
   const [quantityMode, setQuantityMode] = useState<"random" | "fixed">(
@@ -209,6 +217,9 @@ export default function Home() {
     setSubscriptionMetadata(emptyRows());
     setProductId("");
     setPriceId("");
+    setCustomCurrency("gbp");
+    setCustomInterval("year");
+    setCustomAmount("");
     setCouponId("");
     setOffline(false);
     setNetD("30");
@@ -256,7 +267,13 @@ export default function Home() {
             p.id === selections?.priceId && p.productId === chosenProduct,
         )
           ? selections!.priceId!
-          : "";
+          : chosenProduct &&
+              (selections?.priceId === "custom" ||
+                !data.prices.some(
+                  (p: { productId: string }) => p.productId === chosenProduct,
+                ))
+            ? "custom"
+            : "";
         setProductId(chosenProduct);
         setPriceId(chosenPrice);
         setCouponId(
@@ -299,6 +316,12 @@ export default function Home() {
         setQuantityMode(saved.quantityMode);
       if (typeof saved.quantity === "string") setQuantity(saved.quantity);
       if (typeof saved.netD === "string") setNetD(saved.netD);
+      if (["usd", "gbp", "eur", "cad"].includes(saved.customCurrency))
+        setCustomCurrency(saved.customCurrency);
+      if (["day", "week", "month", "year"].includes(saved.customInterval))
+        setCustomInterval(saved.customInterval);
+      if (typeof saved.customAmount === "string")
+        setCustomAmount(saved.customAmount);
       if (typeof saved.trialDays === "string") setTrialDays(saved.trialDays);
       if (typeof saved.rememberKey === "boolean")
         setRememberKey(saved.rememberKey);
@@ -321,6 +344,9 @@ export default function Home() {
           ...initialSettings.current,
           productId,
           priceId,
+          customCurrency,
+          customInterval,
+          customAmount,
           couponId,
         };
       localStorage.setItem(
@@ -338,6 +364,9 @@ export default function Home() {
           trialDays,
           quantityMode,
           quantity,
+          customCurrency,
+          customInterval,
+          customAmount,
           rememberKey,
           apiKey: rememberKey ? apiKey : "",
           testClockId,
@@ -373,6 +402,9 @@ export default function Home() {
     testClockId,
     productId,
     priceId,
+    customCurrency,
+    customInterval,
+    customAmount,
     couponId,
     catalog,
     preview,
@@ -566,6 +598,14 @@ export default function Home() {
       setError("Enter a whole-number quantity greater than zero.");
       return;
     }
+    const customUnitAmount =
+      priceId === "custom" ? majorAmountToMinor(customAmount) : null;
+    if (priceId === "custom" && customUnitAmount === null) {
+      setError(
+        "Enter a valid custom unit amount greater than zero, with up to two decimal places.",
+      );
+      return;
+    }
     if (
       trialDays !== "" &&
       (!/^\d+$/.test(trialDays) ||
@@ -585,7 +625,17 @@ export default function Home() {
       addressOverrides: overrides,
       customerMetadata,
       subscriptionMetadata,
-      priceId,
+      priceId: priceId === "custom" ? "" : priceId,
+      ...(priceId === "custom"
+        ? {
+            priceData: {
+              currency: customCurrency,
+              product: productId,
+              recurring: { interval: customInterval },
+              unit_amount: customUnitAmount!,
+            },
+          }
+        : {}),
       metadataReferenceDate: new Date().toISOString(),
       quantityMode,
       quantity:
@@ -613,12 +663,15 @@ export default function Home() {
   }
   const prices = catalog?.prices.filter((p) => p.productId === productId) || [];
   const selectedPrice = catalog?.prices.find((p) => p.id === priceId);
+  const isCustomPrice = priceId === "custom";
   const selectedProduct = catalog?.products.find((p) => p.id === productId);
   const coupons =
     catalog?.coupons.filter(
       (c) =>
         (!c.products.length || c.products.includes(productId)) &&
-        (!c.currency || c.currency === selectedPrice?.currency),
+        (!c.currency ||
+          c.currency ===
+            (isCustomPrice ? customCurrency : selectedPrice?.currency)),
     ) || [];
   const address = { ...(preview?.address || emptyAddress), ...overrides };
 
@@ -1010,7 +1063,13 @@ export default function Home() {
                       const matching = catalog?.prices.filter(
                         (p) => p.productId === e.target.value,
                       );
-                      setPriceId(matching?.length === 1 ? matching[0].id : "");
+                      setPriceId(
+                        matching?.length === 1
+                          ? matching[0].id
+                          : matching?.length === 0
+                            ? "custom"
+                            : "",
+                      );
                     }}
                     helperText={
                       catalog && !catalog.products.length
@@ -1058,8 +1117,8 @@ export default function Home() {
                   }}
                   helperText={
                     productId && !prices.length
-                      ? "This product has no active recurring prices. Add one in Stripe, then refresh."
-                      : "Choose the billing price for each subscription."
+                      ? "This product has no active recurring prices. Enter a custom price below."
+                      : "Choose a saved price or enter a custom price below."
                   }
                   slotProps={{
                     inputLabel: { shrink: true },
@@ -1078,7 +1137,79 @@ export default function Home() {
                       {p.label}
                     </MenuItem>
                   ))}
+                  <MenuItem value="custom">Custom price</MenuItem>
                 </TextField>
+                {isCustomPrice && (
+                  <Stack sx={{ gap: 2 }}>
+                    <Stack
+                      direction={{ xs: "column", sm: "row" }}
+                      sx={{ gap: 2 }}
+                    >
+                      <TextField
+                        select
+                        label="Currency"
+                        value={customCurrency}
+                        onChange={(e) => {
+                          setCustomCurrency(
+                            e.target.value as typeof customCurrency,
+                          );
+                          setCouponId("");
+                        }}
+                        disabled={running || pending}
+                        sx={{ flex: 1 }}
+                      >
+                        <MenuItem value="usd">USD · $</MenuItem>
+                        <MenuItem value="gbp">GBP · £</MenuItem>
+                        <MenuItem value="eur">EUR · €</MenuItem>
+                        <MenuItem value="cad">CAD · CA$</MenuItem>
+                      </TextField>
+                      <TextField
+                        select
+                        label="Billing interval"
+                        value={customInterval}
+                        onChange={(e) =>
+                          setCustomInterval(
+                            e.target.value as typeof customInterval,
+                          )
+                        }
+                        disabled={running || pending}
+                        sx={{ flex: 1 }}
+                      >
+                        <MenuItem value="year">Year</MenuItem>
+                        <MenuItem value="month">Month</MenuItem>
+                        <MenuItem value="week">Week</MenuItem>
+                        <MenuItem value="day">Day</MenuItem>
+                      </TextField>
+                    </Stack>
+                    <TextField
+                      label="Unit amount"
+                      value={customAmount}
+                      onChange={(e) => {
+                        const formatted = formatMajorAmount(e.target.value);
+                        if (formatted !== null) setCustomAmount(formatted);
+                      }}
+                      disabled={running || pending}
+                      slotProps={{
+                        input: {
+                          startAdornment: (
+                            <Box
+                              component="span"
+                              sx={{ mr: 1, color: "text.secondary" }}
+                            >
+                              {
+                                { usd: "$", gbp: "£", eur: "€", cad: "CA$" }[
+                                  customCurrency
+                                ]
+                              }
+                            </Box>
+                          ),
+                        },
+                        htmlInput: { inputMode: "decimal" },
+                      }}
+                      helperText="Enter the price per unit in major currency units. For example, 1,000.50 becomes 100,050 in Stripe."
+                    />
+                  </Stack>
+                )}
                 <Box>
                   <Typography
                     variant="body2"

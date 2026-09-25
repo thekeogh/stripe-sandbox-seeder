@@ -20,6 +20,76 @@ const catalog = {
   ],
 };
 
+test("custom recurring price for a product without prices formats, persists and submits price_data", async ({
+  page,
+}) => {
+  const payloads: any[] = [];
+  await page.route("**/api/catalog", (route) =>
+    route.fulfill({ json: { ...catalog, prices: [] } }),
+  );
+  await page.route("**/api/seed", (route) => {
+    const body = route.request().postDataJSON();
+    payloads.push(body);
+    return route.fulfill({
+      json: {
+        customerId: "cus_custom",
+        subscriptionId: "sub_custom",
+        name: "Example",
+        email: "sample@example.com",
+        status: "active",
+      },
+    });
+  });
+  await page.goto("/");
+  await page.getByLabel("Secret API key").fill("sk_test_custom_price_fixture");
+  await page.getByRole("button", { name: "Connect", exact: true }).click();
+  await expect(page.getByText("●  Stripe connected")).toBeVisible();
+  await page.getByRole("combobox", { name: "Product", exact: true }).click();
+  await page.getByRole("option", { name: "Starter", exact: true }).click();
+  await expect(
+    page.getByRole("combobox", { name: "Recurring price" }),
+  ).toHaveText("Custom price");
+  await expect(page.getByRole("combobox", { name: "Currency" })).toHaveText(
+    "GBP · £",
+  );
+  await expect(
+    page.getByRole("combobox", { name: "Billing interval" }),
+  ).toHaveText("Year");
+  await page.getByLabel("Unit amount").fill("1000000000");
+  await expect(page.getByLabel("Unit amount")).toHaveValue("1,000,000,000");
+  await page.getByRole("combobox", { name: "Currency" }).click();
+  await page.getByRole("option", { name: "USD · $" }).click();
+  await page.getByRole("combobox", { name: "Billing interval" }).click();
+  await page.getByRole("option", { name: "Month" }).click();
+  await page.getByLabel("Unit amount").fill("1,000.50");
+  await page.getByLabel("Number of customers").fill("1");
+  await page.reload();
+  await expect(
+    page.getByRole("combobox", { name: "Recurring price" }),
+  ).toHaveText("Custom price");
+  await expect(page.getByLabel("Unit amount")).toHaveValue("1,000.50");
+  await expect(page.getByRole("combobox", { name: "Currency" })).toHaveText(
+    "USD · $",
+  );
+  await expect(
+    page.getByRole("combobox", { name: "Billing interval" }),
+  ).toHaveText("Month");
+  await page
+    .getByRole("button", { name: "Seed customers", exact: true })
+    .click();
+  await expect(page.getByText("Your sandbox is ready")).toBeVisible();
+  expect(payloads).toHaveLength(1);
+  expect(payloads[0].config).toMatchObject({
+    priceId: "",
+    priceData: {
+      currency: "usd",
+      product: "prod_demo",
+      recurring: { interval: "month" },
+      unit_amount: 100050,
+    },
+  });
+});
+
 test("connection, every form preference, metadata keyboard controls, reload, and invoice batch", async ({
   page,
 }) => {
